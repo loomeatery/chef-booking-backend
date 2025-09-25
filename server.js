@@ -1,9 +1,8 @@
-// server.js (ESM)
+// server.js (ESM, minimal + stable)
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
-import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -11,16 +10,17 @@ const app  = express();
 const port = process.env.PORT || 3000;
 
 // --- Stripe ---
-if (!process.env.STRIPE_SECRET) {
-  console.warn("⚠️  STRIPE_SECRET is not set. Checkout will fail until you add it.");
+const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
+if (!STRIPE_SECRET) {
+  console.warn("⚠️ STRIPE_SECRET is not set. Checkout will fail until you add it in Render → Environment.");
 }
-const stripe = new Stripe(process.env.STRIPE_SECRET || "");
+const stripe = new Stripe(STRIPE_SECRET);
 
 // --- Middleware ---
 app.use(cors());
 app.use(express.json());
 
-// --- Simple in-memory "database" for booked dates ---
+// --- In-memory booked dates (demo) ---
 let bookedDates = [];
 
 // --- Health checks ---
@@ -41,82 +41,78 @@ app.get("/api/availability", (req, res) => {
 });
 
 // === Quote (front-end preview only; no tax now) ===
-app.post("/api/quote", async (req, res) => {
+app.post("/api/quote", (req, res) => {
   try {
-    const { pkg, guests } = req.body;
+    const { pkg, guests } = req.body || {};
+    const PKG = {
+      tasting:  { perPerson: 200, depositPct: 0.30 },
+      family:   { perPerson: 200, depositPct: 0.30 },
+      cocktail: { perPerson: 125, depositPct: 0.30 },
+    };
+    const sel = PKG[pkg] || PKG.tasting;
 
-    const perPerson  = pkg === "cocktail" ? 125 : 200;
-    const depositPct = 0.30;
-
-    const g         = Math.max(1, Number(guests || 0));
-    const subtotal  = perPerson * g;
-    const deposit   = Math.round(subtotal * depositPct); // dollars (not cents) for preview
+    const g        = Math.max(1, Number(guests || 0));
+    const subtotal = sel.perPerson * g;
+    const deposit  = Math.round(subtotal * sel.depositPct); // dollars (for preview)
 
     res.json({
       subtotal,
-      tax: 0,           // placeholder (we don't tax the deposit)
-      total: subtotal,  // preview only; you’ll tax final invoice later
-      deposit          // deposit collected now (in dollars for the preview)
+      tax: 0,           // no tax on deposit; final invoice later
+      total: subtotal,  // preview only
+      deposit
     });
-} catch (err) {
-  console.error("Book error:", err);
-  res.status(400).json({ error: err?.message || "Unable to create booking." });
-}
+  } catch (err) {
+    console.error("Quote error:", err);
+    res.status(400).json({ error: "Unable to create quote." });
+  }
 });
 
 // === Book (Stripe Checkout for 30% deposit ONLY; no tax now) ===
 app.post("/api/book", async (req, res) => {
   try {
     const {
-      date, time, pkg, guests, name, email, phone, address, diet, recaptcha
+      date, time, pkg, guests, name, email, phone, address, diet
     } = req.body || {};
 
-    // --- Verify reCAPTCHA only if a secret is configured ---
-    if (process.env.RECAPTCHA_SECRET) {
-      const verifyURL = `https://www.google.com/recaptcha/api/siteverify?secret=${
-        encodeURIComponent(process.env.RECAPTCHA_SECRET)
-      }&response=${encodeURIComponent(recaptcha || "")}`;
+    // Basic validation
+    if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
+    if (!process.env.SITE_URL) return res.status(400).json({ error: "Server misconfigured: SITE_URL is missing." });
+    if (!date || !time) return res.status(400).json({ error: "Missing date or time." });
+    if (!email) return res.status(400).json({ error: "Email is required." });
+    const g = Number(guests);
+    if (!Number.isFinite(g) || g < 1) return res.status(400).json({ error: "Guest count is invalid." });
 
-      const rc = await fetch(verifyURL, { method: "POST" });
-      const rcData = await rc.json();
-      if (!rcData.success) return res.status(400).json({ error: "reCAPTCHA failed." });
-    }
-
-    // --- Pricing (deposit only) ---
-    const PACKAGE_MAP = {
+    // Pricing (deposit only)
+    const PKG = {
       tasting:  { title: "Tasting Menu",        perPerson: 200, depositPct: 0.30 },
       family:   { title: "Family-Style Dinner", perPerson: 200, depositPct: 0.30 },
       cocktail: { title: "Cocktail & Canapés",  perPerson: 125, depositPct: 0.30 },
     };
-    const sel = PACKAGE_MAP[pkg] || PACKAGE_MAP.tasting;
+    const sel = PKG[pkg] || PKG.tasting;
 
-    const g                = Math.max(1, Number(guests || 0));
-    const subtotal         = sel.perPerson * g;             // dollars
-    const depositDollars   = subtotal * sel.depositPct;     // dollars
+    const subtotal         = sel.perPerson * g;          // dollars
+    const depositDollars   = subtotal * sel.depositPct;  // dollars
     const depositCents     = Math.round(depositDollars * 100);
-    const balanceBeforeTax = subtotal - depositDollars;     // dollars (display only)
+    const balanceBeforeTax = subtotal - depositDollars;  // dollars (display only)
 
-    // --- What shows on Stripe Checkout ---
-    const descLines = [
-      "What’s included:",
-      "• Grocery shopping & prep",
-      "• On-site cooking & service",
-      "• Kitchen clean-up",
-      "",
-      "Booking details:",
-      `• Party size: ${g}`,
-      `• Menu: ${sel.title}`,
-      `• Price: $${sel.perPerson}/guest`,
-      `• Subtotal: $${subtotal.toFixed(2)}`,
-      `• Deposit (${Math.round(sel.depositPct*100)}%): $${depositDollars.toFixed(2)}`,
-      `• Balance due (before tax): $${balanceBeforeTax.toFixed(2)}`,
-      "",
-      "Sales tax, if any, is calculated and collected with your final invoice (not on today’s deposit)."
-    ].join("\n");
+    if (!Number.isFinite(depositCents) || depositCents < 50) {
+      return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
+    }
+
+    // Keep description concise to avoid any Stripe validation issues
+    const shortDesc =
+      `Party: ${g} • ${sel.title} • $${sel.perPerson}/guest • ` +
+      `Subtotal $${subtotal.toFixed(2)} • Deposit $${depositDollars.toFixed(2)} • ` +
+      `Balance (pre-tax) $${balanceBeforeTax.toFixed(2)} • Event ${date} ${time}. ` +
+      `Tax, if any, will be added to your final invoice.`;
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      // We charge **deposit only** now:
+      customer_email: email,
+      billing_address_collection: "required",
+      phone_number_collection: { enabled: true },
+      automatic_tax: { enabled: false }, // no tax on deposit
+
       line_items: [
         {
           quantity: 1,
@@ -124,33 +120,18 @@ app.post("/api/book", async (req, res) => {
             currency: "usd",
             unit_amount: depositCents, // cents
             product_data: {
-              name: `Deposit – ${sel.title} (${g} guests, ${date} ${time})`,
-              description: descLines
+              name: `Deposit — ${sel.title} (${g} guests, ${date} ${time})`,
+              description: shortDesc
             }
           }
         }
       ],
 
-      // We do NOT tax deposits. Final tax will be on your later invoice.
-      automatic_tax: { enabled: false },
+      // Required URLs
+      success_url: `${process.env.SITE_URL}/booking-success`,
+      cancel_url:  `${process.env.SITE_URL}/booking-cancelled`,
 
-      // Collect contact details
-      customer_email: email,
-      billing_address_collection: "required",
-      phone_number_collection: { enabled: true },
-
-      // Helpful message under the Pay button
-      custom_text: {
-        submit: {
-          message:
-            "Today you’re paying a 30% deposit only. The remaining balance, including any applicable sales tax, will be invoiced 7 days before your event."
-        }
-      },
-
-      // Optional: require agreeing to terms
-      consent_collection: { terms_of_service: "required" },
-
-      // Keep all context with the payment in Stripe
+      // Minimal metadata (safe)
       metadata: {
         pkg,
         package_title: sel.title,
@@ -167,23 +148,24 @@ app.post("/api/book", async (req, res) => {
         subtotal_usd: subtotal.toFixed(2),
         deposit_usd: depositDollars.toFixed(2),
         balance_before_tax_usd: balanceBeforeTax.toFixed(2)
-      },
-
-      success_url: `${process.env.SITE_URL}/booking-success`,
-      cancel_url:  `${process.env.SITE_URL}/booking-cancelled`
+      }
     });
 
-    // Mark the date as booked (demo only; replace with DB later)
+    // Mark date booked (demo; replace with DB later)
     if (date) bookedDates.push(date);
 
-    res.json({ checkoutUrl: session.url });
+    return res.json({ checkoutUrl: session.url });
   } catch (err) {
-    console.error("Book error:", err);
-    res.status(400).json({ error: "Unable to create booking." });
+    const msg = err?.raw?.message || err?.message || "Unable to create booking.";
+    console.error("Book error:", msg);
+    return res.status(400).json({ error: msg });
   }
 });
 
 // --- Start server ---
 app.listen(port, () => {
-  console.log(`Server running on port ${port}`);
+  console.log(`Chef booking server listening on ${port}`);
+  if (!process.env.SITE_URL) {
+    console.warn("ℹ️  SITE_URL not set; set it in Render → Environment to your site URL.");
+  }
 });
