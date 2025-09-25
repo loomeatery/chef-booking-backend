@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
+import fetch from "node-fetch";
 
 dotenv.config();
 
@@ -57,10 +58,10 @@ app.post("/api/quote", async (req, res) => {
       total: subtotal,  // preview only; you’ll tax final invoice later
       deposit          // deposit collected now (in dollars for the preview)
     });
-  } catch (err) {
-    console.error("Quote error:", err);
-    res.status(400).json({ error: "Unable to create quote." });
-  }
+} catch (err) {
+  console.error("Book error:", err);
+  res.status(400).json({ error: err?.message || "Unable to create booking." });
+}
 });
 
 // === Book (Stripe Checkout for 30% deposit ONLY; no tax now) ===
