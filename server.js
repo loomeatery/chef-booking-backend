@@ -11,9 +11,6 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // --- Stripe ---
-if (!process.env.STRIPE_SECRET) {
-  console.warn("⚠️  Missing STRIPE_SECRET in environment.");
-}
 const stripe = new Stripe(process.env.STRIPE_SECRET);
 
 // --- Middleware ---
@@ -23,10 +20,10 @@ app.use(express.json());
 // --- Simple in-memory 'database' for booked dates ---
 let bookedDates = [];
 
-// --- Health check (useful for Render) ---
+// --- Health check (Render uses this sometimes) ---
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
-// === Availability Endpoint ===
+// === Availability (one party per day) ===
 app.get("/api/availability", (req, res) => {
   const year = Number(req.query.year);
   const month = Number(req.query.month); // 1-12
@@ -39,7 +36,7 @@ app.get("/api/availability", (req, res) => {
   res.json({ booked: dates });
 });
 
-// === Quote Endpoint (front-end preview only; tax is computed at Checkout) ===
+// === Quote (front-end preview only; Stripe calculates real tax at final invoice) ===
 app.post("/api/quote", async (req, res) => {
   try {
     const { pkg, guests } = req.body;
@@ -48,15 +45,14 @@ app.post("/api/quote", async (req, res) => {
     const depositPct = 0.30;
 
     const g = Math.max(1, Number(guests || 0));
-    const subtotal = perPerson * g;             // e.g. 200 * 6 = 1200
+    const subtotal = perPerson * g;
     const deposit  = Math.round(subtotal * depositPct);
 
-    // We do NOT compute tax here—Stripe calculates it at Checkout from the buyer's address.
     res.json({
       subtotal,
-      tax: 0,                                   // placeholder
-      total: subtotal,
-      deposit                                   // before tax; tax added in Checkout
+      tax: 0,            // placeholder (no tax collected in this session)
+      total: subtotal,   // estimate shown on your site; final tax comes later
+      deposit            // deposit before tax; deposit is what we collect now
     });
   } catch (err) {
     console.error(err);
@@ -64,17 +60,14 @@ app.post("/api/quote", async (req, res) => {
   }
 });
 
-// === Book Endpoint (creates Stripe Checkout Session for 30% deposit + tax) ===
+// === Book (creates Stripe Checkout session for 30% deposit ONLY; no tax now) ===
 app.post("/api/book", async (req, res) => {
   try {
     const {
       date, time, pkg, guests, name, email, phone, address, diet, recaptcha
     } = req.body;
 
-    // --- Verify reCAPTCHA ---
-    if (!process.env.RECAPTCHA_SECRET) {
-      console.warn("⚠️  Missing RECAPTCHA_SECRET in environment.");
-    }
+    // Verify reCAPTCHA
     const rc = await fetch(
       `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET}&response=${recaptcha}`,
       { method: "POST" }
@@ -82,42 +75,32 @@ app.post("/api/book", async (req, res) => {
     const rcData = await rc.json();
     if (!rcData.success) return res.status(400).json({ error: "reCAPTCHA failed." });
 
-    // --- Pricing (deposit only) ---
+    // Pricing – deposit only
     const perPerson = pkg === "cocktail" ? 125 : 200;
     const depositPct = 0.30;
-
     const g = Math.max(1, Number(guests || 0));
-    const subtotal = perPerson * g;                  // e.g. 1200
-    const depositBase = subtotal * depositPct;       // e.g. 360
+    const subtotal = perPerson * g;
+    const depositBase = subtotal * depositPct;
     const depositCents = Math.round(depositBase * 100);
-
-    // --- Create Stripe Checkout Session ---
-    if (!process.env.SITE_URL) {
-      console.warn("⚠️  Missing SITE_URL in environment.");
-    }
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
 
-      // Let Stripe apply tax at checkout using buyer's address
-      automatic_tax: { enabled: true },
+      // We are NOT collecting tax on the deposit
+      automatic_tax: { enabled: false },
 
-      // Require a billing address to compute tax
       billing_address_collection: "required",
       customer_creation: "if_required",
-
       customer_email: email,
 
-      // One line item = the DEPOSIT amount only (tax added on top)
       line_items: [
         {
           price_data: {
             currency: "usd",
-            unit_amount: depositCents,               // *** ONLY the 30% deposit ***
-            tax_behavior: "exclusive",               // allow tax to be added
+            unit_amount: depositCents, // 30% deposit only
             product_data: {
               name: `Deposit – ${pkg} (${g} guests, ${date})`,
-              // Food for Immediate Consumption
+              // Food for Immediate Consumption (for reporting consistency)
               tax_code: "txcd_40060003"
             }
           },
@@ -125,7 +108,14 @@ app.post("/api/book", async (req, res) => {
         }
       ],
 
-      // Keep booking details as metadata
+      // Helpful note shown on Checkout
+      custom_text: {
+        submit: {
+          message:
+            "Today you’re paying a 30% deposit only. The remaining balance, including any applicable sales tax, will be invoiced 7 days before your event."
+        }
+      },
+
       metadata: {
         event_date: date || "",
         event_time: time || "",
@@ -144,8 +134,7 @@ app.post("/api/book", async (req, res) => {
       cancel_url: `${process.env.SITE_URL}/booking-cancelled`
     });
 
-    // NOTE: In production, you should mark the date as booked after payment succeeds via a webhook.
-    // For now we mirror your original behavior:
+    // TEMP: mark date as booked now (replace w/ webhook in production)
     if (date) bookedDates.push(date);
 
     res.json({ checkoutUrl: session.url });
