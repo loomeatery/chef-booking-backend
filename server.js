@@ -67,22 +67,6 @@ async function verifyRecaptcha(token, ip) {
   }
 }
 
-/* ---------- Helper: pack arbitrary payload → Stripe metadata safely ---------- */
-function toStripeMetadata(payload) {
-  const metadata = {};
-  const SKIP = new Set(["recaptcha", "recaptchaToken"]);
-  const MAX_KEYS = 45; // stay safely under Stripe's 50-key limit
-  for (const [k, vRaw] of Object.entries(payload || {})) {
-    if (SKIP.has(k) || vRaw == null) continue;
-    const key = String(k).trim().slice(0, 40).replace(/\s+/g, "_"); // compact key
-    const val = String(vRaw).slice(0, 500);                         // Stripe value limit
-    if (!val) continue;
-    metadata[key] = val;
-    if (Object.keys(metadata).length >= MAX_KEYS) break;
-  }
-  return metadata;
-}
-
 /* ---------- Quote (preview only; no tax on deposit) ---------- */
 app.post("/api/quote", (req, res) => {
   try {
@@ -118,7 +102,7 @@ app.post("/api/book", async (req, res) => {
     const captchaOK = await verifyRecaptcha(token, req.ip);
     if (!captchaOK) return res.status(400).json({ error: "reCAPTCHA failed. Please retry." });
 
-    // 2) Normalize incoming fields (works with your new footer JS)
+    // 2) Normalize incoming fields (works with your footer JS)
     const b = req.body || {};
 
     const date  = b.date;
@@ -194,15 +178,40 @@ app.post("/api/book", async (req, res) => {
       success_url: `${process.env.SITE_URL}/booking-success`,
       cancel_url:  `${process.env.SITE_URL}/booking-cancelled`,
 
-      // Save EVERYTHING from the form (minus recaptcha) to Stripe metadata
-      metadata: toStripeMetadata({
-        ...b,
-        pkg: packageId,
+      // Clean, curated metadata (no JSON blobs)
+      metadata: {
+        // booking
+        event_date: date,
+        start_time: time,
+        package: packageId,
         package_title: packageName,
-        subtotal_usd: subtotal.toFixed(2),
-        deposit_usd: depositDollars.toFixed(2),
-        balance_before_tax_usd: balanceBeforeTax.toFixed(2)
-      }),
+        guests: String(guests),
+
+        // contact
+        first_name: b.firstName || "",
+        last_name:  b.lastName  || "",
+        email:      email,
+        phone:      b.phone || "",
+
+        // event address
+        address_line1: b.address1 || "",
+        city:          b.city || "",
+        state:         b.state || "",
+        zip:           b.zip || "",
+        country:       "US",
+
+        // notes / acks
+        diet_notes:            b.diet || "",
+        ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
+        agreed_to_terms:       b.agreedToTerms ? "yes" : "no",
+
+        // money (as readable strings)
+        per_person_usd:            `$${perPerson.toFixed(2)}`,
+        deposit_pct:               `${Math.round(depositPct * 100)}%`,
+        subtotal_usd:              `$${subtotal.toFixed(2)}`,
+        deposit_usd:               `$${depositDollars.toFixed(2)}`,
+        remaining_balance_pre_tax: `$${balanceBeforeTax.toFixed(2)}`
+      },
 
       custom_text: {
         submit: { message: "Remaining balance (pre-tax) is due after today's deposit." }
