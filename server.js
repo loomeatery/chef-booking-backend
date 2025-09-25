@@ -160,18 +160,19 @@ app.post("/api/book", async (req, res) => {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 4) Stripe product/line text (lean and receipt-like)
-    const nameLine = `Deposit — ${packageName} (${guests} guests, ${date} ${time})`;
-    const descBits = [
-      `Deposit ${Math.round(depositPct * 100)}%`,
-      `$${perPerson}/guest`,
-      `Subtotal $${subtotal.toFixed(2)}`,
-      `Deposit $${depositDollars.toFixed(2)}`,
-      `Balance (pre-tax) $${balanceBeforeTax.toFixed(2)}`,
-      `Event ${date} ${time}`,
-      `Tax, if any, will be added to your final invoice.`
-    ];
-    const shortDesc = descBits.join(" • ");
+    // 4) Stripe product/line text (receipt-like)
+const nameLine = `Deposit — ${packageName} (${guests} guests, ${date} ${time})`;
+
+// use newlines + bullets to itemize
+const shortDesc =
+  [
+    `• $${perPerson}/guest`,
+    `• Subtotal: $${subtotal.toFixed(2)}`,
+    `• Deposit (${Math.round(depositPct*100)}%): $${depositDollars.toFixed(2)}`,
+    `• Remaining balance (pre-tax) due after deposit: $${balanceBeforeTax.toFixed(2)}`,
+    `• Event: ${date} ${time}`,
+    `• Sales tax, if any, will be added to your final invoice`
+  ].join('\n');
 
     // 5) Create session w/ full metadata
     const session = await stripe.checkout.sessions.create({
@@ -209,7 +210,8 @@ app.post("/api/book", async (req, res) => {
       }),
 
       custom_text: {
-        submit: { message: "Deposit only. Remaining balance due after your event." }
+  submit: { message: "Remaining balance (pre-tax) is due after today’s deposit." }
+}
       }
     });
 
