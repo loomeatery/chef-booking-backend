@@ -1,4 +1,4 @@
-// server.js (ESM, minimal + stable)
+// server.js (ESM)
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -9,25 +9,25 @@ dotenv.config();
 const app  = express();
 const port = process.env.PORT || 3000;
 
-// --- Stripe ---
+/* ---------- Stripe ---------- */
 const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
 if (!STRIPE_SECRET) {
-  console.warn("⚠️ STRIPE_SECRET is not set. Checkout will fail until you add it in Render → Environment.");
+  console.warn("⚠️ STRIPE_SECRET is not set. Add it in Render → Environment.");
 }
 const stripe = new Stripe(STRIPE_SECRET);
 
-// --- Middleware ---
+/* ---------- Middleware ---------- */
 app.use(cors());
 app.use(express.json());
 
-// --- In-memory booked dates (demo) ---
+/* ---------- Demo storage for booked dates (replace with DB later) ---------- */
 let bookedDates = [];
 
-// --- Health checks ---
+/* ---------- Health ---------- */
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
-// === Availability (one party per day) ===
+/* ---------- Availability (one party per day) ---------- */
 app.get("/api/availability", (req, res) => {
   const year  = Number(req.query.year);
   const month = Number(req.query.month); // 1–12
@@ -40,26 +40,26 @@ app.get("/api/availability", (req, res) => {
   res.json({ booked: dates });
 });
 
-/* ---------------- reCAPTCHA (v2 checkbox) ---------------- */
+/* ---------- reCAPTCHA v2 (checkbox) verify ---------- */
 async function verifyRecaptcha(token, ip) {
   try {
-    if (!process.env.RECAPTCHA_SECRET) {
-      console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification (allowing all).");
-      return true; // allow if you haven't set it yet
+    const secret = process.env.RECAPTCHA_SECRET;
+    if (!secret) {
+      console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification.");
+      return true; // allow while you wire it up
     }
     if (!token) return false;
 
-    // Node 18+ has global fetch
-    const res = await fetch("https://www.google.com/recaptcha/api/siteverify", {
+    const resp = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        secret: process.env.RECAPTCHA_SECRET,
+        secret,
         response: token,
         remoteip: ip || ""
       })
     });
-    const data = await res.json();
+    const data = await resp.json();
     return data.success === true;
   } catch (e) {
     console.error("reCAPTCHA verify error:", e);
@@ -67,15 +67,15 @@ async function verifyRecaptcha(token, ip) {
   }
 }
 
-/* -------------- Helper: Stripe metadata safe pack -------- */
+/* ---------- Helper: pack arbitrary payload → Stripe metadata safely ---------- */
 function toStripeMetadata(payload) {
   const metadata = {};
   const SKIP = new Set(["recaptcha", "recaptchaToken"]);
-  const MAX_KEYS = 45; // stay under Stripe's 50-key limit
+  const MAX_KEYS = 45; // stay safely under Stripe's 50-key limit
   for (const [k, vRaw] of Object.entries(payload || {})) {
     if (SKIP.has(k) || vRaw == null) continue;
-    const key = String(k).trim().slice(0, 40).replace(/\s+/g, "_");
-    const val = String(vRaw).slice(0, 500);
+    const key = String(k).trim().slice(0, 40).replace(/\s+/g, "_"); // compact key
+    const val = String(vRaw).slice(0, 500);                         // Stripe value limit
     if (!val) continue;
     metadata[key] = val;
     if (Object.keys(metadata).length >= MAX_KEYS) break;
@@ -83,7 +83,7 @@ function toStripeMetadata(payload) {
   return metadata;
 }
 
-/* ----------------- Quote (preview only) ------------------ */
+/* ---------- Quote (preview only; no tax on deposit) ---------- */
 app.post("/api/quote", (req, res) => {
   try {
     const { pkg } = req.body || {};
@@ -100,36 +100,32 @@ app.post("/api/quote", (req, res) => {
     const subtotal = sel.perPerson * g;
     const deposit  = Math.round(subtotal * sel.depositPct); // dollars (preview)
 
-    res.json({
-      subtotal,
-      tax: 0,
-      total: subtotal,
-      deposit
-    });
+    res.json({ subtotal, tax: 0, total: subtotal, deposit });
   } catch (err) {
     console.error("Quote error:", err);
     res.status(400).json({ error: "Unable to create quote." });
   }
 });
 
-/* ------------- Book (Stripe Checkout deposit) ------------ */
+/* ---------- Book (Stripe Checkout for 30% deposit ONLY) ---------- */
 app.post("/api/book", async (req, res) => {
   try {
     if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
     if (!process.env.SITE_URL) return res.status(400).json({ error: "Server misconfigured: SITE_URL is missing." });
 
-    // 1) reCAPTCHA (v2 checkbox) – frontend sends recaptchaToken (and recaptcha for legacy)
+    // 1) reCAPTCHA
     const token = req.body?.recaptchaToken || req.body?.recaptcha;
     const captchaOK = await verifyRecaptcha(token, req.ip);
     if (!captchaOK) return res.status(400).json({ error: "reCAPTCHA failed. Please retry." });
 
-    // 2) Normalize incoming fields from your new footer JS
+    // 2) Normalize incoming fields (works with your new footer JS)
     const b = req.body || {};
+
     const date  = b.date;
     const time  = b.time;
     const email = b.email;
 
-    // Package can come as pkg (old) or packageId/packageName (new)
+    // Package can arrive as pkg (old) or packageId/packageName (new)
     const packageId   = b.packageId || b.pkg || "tasting";
     const packageName = b.packageName || {
       tasting:  "Tasting Menu",
@@ -138,11 +134,13 @@ app.post("/api/book", async (req, res) => {
     }[packageId] || "Private Event";
 
     const guests = Number(b.guests || 0);
+
+    // Validation
     if (!date || !time) return res.status(400).json({ error: "Missing date or time." });
     if (!email) return res.status(400).json({ error: "Email is required." });
     if (!Number.isFinite(guests) || guests < 1) return res.status(400).json({ error: "Guest count is invalid." });
 
-    // 3) Pricing (allow frontend to pass perPerson/depositPct, else fall back)
+    // 3) Pricing (allow overrides from frontend; else fall back by package)
     const PKG = {
       tasting:  { perPerson: 200, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
@@ -152,7 +150,7 @@ app.post("/api/book", async (req, res) => {
     const depositPct = Number(b.depositPct ?? PKG[packageId]?.depositPct ?? 0.30);
 
     const subtotal         = perPerson * guests;                // dollars
-    const depositDollars   = Math.round(subtotal * depositPct); // dollars (rounded for display)
+    const depositDollars   = Math.round(subtotal * depositPct); // dollars (rounded)
     const depositCents     = depositDollars * 100;              // cents
     const balanceBeforeTax = Math.max(0, subtotal - depositDollars);
 
@@ -160,21 +158,18 @@ app.post("/api/book", async (req, res) => {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 4) Stripe product/line text (receipt-like)
-const nameLine = `Deposit — ${packageName} (${guests} guests, ${date} ${time})`;
+    // 4) Receipt-like line item text (bulleted with newlines)
+    const nameLine = `Deposit — ${packageName} (${guests} guests, ${date} ${time})`;
+    const shortDesc = [
+      `• $${perPerson}/guest`,
+      `• Subtotal: $${subtotal.toFixed(2)}`,
+      `• Deposit (${Math.round(depositPct * 100)}%): $${depositDollars.toFixed(2)}`,
+      `• Remaining balance (pre-tax) due after deposit: $${balanceBeforeTax.toFixed(2)}`,
+      `• Event: ${date} ${time}`,
+      `• Sales tax, if any, will be added to your final invoice`
+    ].join("\n");
 
-// use newlines + bullets to itemize
-const shortDesc =
-  [
-    `• $${perPerson}/guest`,
-    `• Subtotal: $${subtotal.toFixed(2)}`,
-    `• Deposit (${Math.round(depositPct*100)}%): $${depositDollars.toFixed(2)}`,
-    `• Remaining balance (pre-tax) due after deposit: $${balanceBeforeTax.toFixed(2)}`,
-    `• Event: ${date} ${time}`,
-    `• Sales tax, if any, will be added to your final invoice`
-  ].join('\n');
-
-    // 5) Create session w/ full metadata
+    // 5) Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
@@ -199,7 +194,7 @@ const shortDesc =
       success_url: `${process.env.SITE_URL}/booking-success`,
       cancel_url:  `${process.env.SITE_URL}/booking-cancelled`,
 
-      // Save EVERYTHING you sent from the form (minus recaptcha)
+      // Save EVERYTHING from the form (minus recaptcha) to Stripe metadata
       metadata: toStripeMetadata({
         ...b,
         pkg: packageId,
@@ -210,15 +205,14 @@ const shortDesc =
       }),
 
       custom_text: {
-  submit: { message: "Remaining balance (pre-tax) is due after today’s deposit." }
-}
+        submit: { message: "Remaining balance (pre-tax) is due after today's deposit." }
       }
     });
 
-    // demo: mark date as booked (replace with DB later)
+    // Demo-only: mark date as booked
     if (date) bookedDates.push(date);
 
-    // Frontend supports either key
+    // Return URL for your frontend redirect
     return res.json({ url: session.url, checkoutUrl: session.url });
   } catch (err) {
     const msg = err?.raw?.message || err?.message || "Unable to create booking.";
@@ -227,10 +221,10 @@ const shortDesc =
   }
 });
 
-// --- Start server ---
+/* ---------- Start server ---------- */
 app.listen(port, () => {
   console.log(`Chef booking server listening on ${port}`);
   if (!process.env.SITE_URL) {
-    console.warn("ℹ️  SITE_URL not set; set it in Render → Environment to your site URL.");
+    console.warn("ℹ️  SITE_URL not set; add it in Render → Environment.");
   }
 });
