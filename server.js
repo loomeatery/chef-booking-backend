@@ -83,66 +83,99 @@ app.post("/api/book", async (req, res) => {
     const depositBase = subtotal * depositPct;
     const depositCents = Math.round(depositBase * 100);
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
+// --- inside app.post("/api/book", ...) right before res.json({ checkoutUrl: session.url }) ---
+const PACKAGE_MAP = {
+  tasting:  { title: "Tasting Menu",        perPerson: 200, depositPct: 0.30 },
+  family:   { title: "Family-Style Dinner", perPerson: 200, depositPct: 0.30 },
+  cocktail: { title: "Cocktail & Canapés",  perPerson: 125, depositPct: 0.30 },
+};
 
-      // We are NOT collecting tax on the deposit
-      automatic_tax: { enabled: false },
+const sel = PACKAGE_MAP[pkg] || PACKAGE_MAP.tasting;
+const subtotal       = sel.perPerson * Number(guests || 0);
+const deposit        = Math.round(subtotal * sel.depositPct * 100); // cents
+const balanceBeforeTax = (subtotal - Math.round(subtotal * sel.depositPct)); // display only
 
-      billing_address_collection: "required",
-      customer_creation: "if_required",
-      customer_email: email,
+// Build a clear, concise description that shows on Checkout
+const descLines = [
+  "What’s included:",
+  "• Grocery shopping & prep",
+  "• On-site cooking & service",
+  "• Kitchen clean-up",
+  "",
+  "Booking details:",
+  `• Party size: ${guests}`,
+  `• Menu: ${sel.title}`,
+  `• Price: $${sel.perPerson}/guest`,
+  `• Subtotal: $${subtotal.toFixed(2)}`,
+  `• Deposit (30%): $${(subtotal * sel.depositPct).toFixed(2)}`,
+  `• Balance due (before tax): $${balanceBeforeTax.toFixed(2)}`,
+  "",
+  "Sales tax, if any, is calculated and collected with your final invoice (not on today’s deposit)."
+].join("\n");
 
-      line_items: [
-        {
-          price_data: {
-            currency: "usd",
-            unit_amount: depositCents, // 30% deposit only
-            product_data: {
-              name: `Deposit – ${pkg} (${g} guests, ${date})`,
-              // Food for Immediate Consumption (for reporting consistency)
-              tax_code: "txcd_40060003"
-            }
-          },
-          quantity: 1
-        }
-      ],
+const session = await stripe.checkout.sessions.create({
+  mode: "payment",
+  currency: "usd",
 
-      // Helpful note shown on Checkout
-      custom_text: {
-        submit: {
-          message:
-            "Today you’re paying a 30% deposit only. The remaining balance, including any applicable sales tax, will be invoiced 7 days before your event."
-        }
+  // One line item: the deposit amount only
+  line_items: [
+    {
+      quantity: 1,
+      price_data: {
+        currency: "usd",
+        unit_amount: deposit, // deposit in cents
+        product_data: {
+          // This is the title they see on the left
+          name: `Deposit – ${sel.title} (${guests} guests, ${date} ${time})`,
+          // This multi-line description shows under the title
+          description: descLines,
+        },
       },
+    },
+  ],
 
-      metadata: {
-        event_date: date || "",
-        event_time: time || "",
-        package: pkg || "",
-        guests: String(g),
-        customer_name: name || "",
-        customer_phone: phone || "",
-        diet: diet || "",
-        event_address_line1: address?.line1 || "",
-        event_address_city: address?.city || "",
-        event_address_state: address?.state || "",
-        event_address_zip: address?.postal_code || ""
-      },
+  // Collect good contact + address info
+  customer_email: email,
+  billing_address_collection: "required",
+  phone_number_collection: { enabled: true },
 
-      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.SITE_URL}/booking-cancelled`
-    });
+  // We do NOT tax deposits. Final tax will be on your later invoice.
+  automatic_tax: { enabled: false },
 
-    // TEMP: mark date as booked now (replace w/ webhook in production)
-    if (date) bookedDates.push(date);
+  // Helpful copy at the bottom of the Checkout button area
+  custom_text: {
+    submit: {
+      message:
+        "Today you’re paying a 30% deposit only. The remaining balance, including any applicable sales tax, will be invoiced 7 days before your event.",
+    },
+  },
 
-    res.json({ checkoutUrl: session.url });
-  } catch (err) {
-    console.error(err);
-    res.status(400).json({ error: "Unable to create booking." });
-  }
+  // Require their consent to terms (optional, but nice)
+  consent_collection: { terms_of_service: "required" },
+
+  // Keep all the context with the payment in your Stripe dashboard
+  metadata: {
+    pkg,
+    package_title: sel.title,
+    guests: String(guests),
+    event_date: date,
+    event_time: time,
+    customer_name: name,
+    customer_phone: phone,
+    event_line1: address?.line1 || "",
+    event_city: address?.city || "",
+    event_state: address?.state || "",
+    event_zip: address?.postal_code || "",
+    diet: diet || "",
+    subtotal_usd: subtotal.toFixed(2),
+    deposit_usd: (subtotal * sel.depositPct).toFixed(2),
+    balance_before_tax_usd: balanceBeforeTax.toFixed(2),
+  },
+
+  success_url: `${process.env.SITE_URL}/booking-success`,
+  cancel_url: `${process.env.SITE_URL}/booking-cancelled`,
 });
+
 
 // --- Start server ---
 app.listen(port, () => {
