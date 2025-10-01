@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, fixed)
+// server.js — COMPLETE DROP-IN (ESM, availability fix)
 
 // ----------------- Imports & setup -----------------
 import express from "express";
@@ -84,7 +84,6 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const md = session.metadata || {};
 
       const eventDate = md.event_date;             // "YYYY-MM-DD"
-      // For now we book full days; start_time is optional
       if (eventDate) {
         const start = new Date(`${eventDate}T00:00:00.000Z`);
         const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
@@ -135,11 +134,12 @@ app.get("/api/availability", async (req, res) => {
     const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
     const monthEnd   = new Date(Date.UTC(year, month, 1, 0, 0, 0)); // first of next month
 
+    // ✅ FIXED: removed stray tstzrange(...) term that broke the WHERE clause
     const qBookings = await pool.query(
       `SELECT start_at, end_at
          FROM bookings
         WHERE status='confirmed'
-          AND tstzrange(start_at, end_at, '[)') AND tstzrange(start_at, end_at, '[)') && tstzrange($1, $2, '[)')`,
+          AND tstzrange(start_at, end_at, '[)') && tstzrange($1, $2, '[)')`,
       [monthStart.toISOString(), monthEnd.toISOString()]
     );
 
@@ -281,7 +281,7 @@ app.post("/api/book", async (req, res) => {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 4) Create Stripe Checkout Session (CLEAN METADATA)
+    // 4) Create Stripe Checkout Session (clean metadata)
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
@@ -301,11 +301,10 @@ app.post("/api/book", async (req, res) => {
         }
       }],
 
-      // Send people back to the calendar with a success/cancel flag (no 404)
+      // Send back to calendar with a flag to avoid 404s
       success_url: `${process.env.SITE_URL}/booking-calendar#success`,
       cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
 
-      // Only user-entered fields in metadata
       metadata: {
         event_date: date,
         start_time: time,
@@ -447,7 +446,7 @@ app.get("/admin", (_req, res) => {
 <title>Calendar Admin</title>
 <style>
   :root{--ink:#222;--mut:#666;--bg:#fafafa;--card:#fff;--b:#eee;--btn:#7B8B74;--btn2:#444;}
-  body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:var(--ink);margin:0;padding:24px}
+  body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px}
   .wrap{max-width:900px;margin:0 auto}
   h1{margin:0 0 8px}
   .card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:16px;margin:12px 0}
@@ -565,9 +564,6 @@ async function loadMonth(){
   const m = document.getElementById('month').value;
   if(!m){ return alert('Pick a month'); }
   const [yy,mm] = m.split('-');
-
-  const cal = await fetch(\`\${API}/api/availability?year=\${yy}&month=\${Number(mm)}\`);
-  const calData = await cal.json();
 
   const q1 = await fetch(\`\${API}/api/dev/blackouts\`);
   const blackouts = q1.ok ? await q1.json() : [];
