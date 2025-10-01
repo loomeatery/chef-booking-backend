@@ -303,72 +303,66 @@ app.post("/api/book", async (req, res) => {
       `• Sales tax will be added to your final invoice`
     ].join("\n");
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer_email: email,
-      billing_address_collection: "required",
-      phone_number_collection: { enabled: true },
-      automatic_tax: { enabled: false },
+const session = await stripe.checkout.sessions.create({
+  mode: "payment",
+  customer_email: email,
+  billing_address_collection: "required",
+  phone_number_collection: { enabled: true },
+  automatic_tax: { enabled: false },
 
-      line_items: [{
-        quantity: 1,
-        price_data: {
-          currency: "usd",
-          unit_amount: depositCents,
-          product_data: { name: nameLine, description: shortDesc }
-        }
-      }],
-
-      success_url: `${process.env.SITE_URL}/booking-success`,
-      cancel_url:  `${process.env.SITE_URL}/booking-cancelled`,
-
-      metadata: {
-        // booking
-        event_date: date,
-        start_time: time,
-        package: packageId,
-        package_title: packageName,
-        guests: String(guests),
-
-        // contact
-        first_name: b.firstName || "",
-        last_name:  b.lastName  || "",
-        email:      email,
-        phone:      b.phone || "",
-
-        // address
-        address_line1: b.address1 || b.address_line1 || b.address || "",
-        city:          b.city || "",
-        state:         b.state || "",
-        zip:           b.zip || "",
-        country:       "US",
-
-        // notes/acks
-        diet_notes:            b.diet || "",
-        ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
-        agreed_to_terms:       b.agreedToTerms ? "yes" : "no",
-
-        // money (display)
-        per_person_usd:            `$${perPerson.toFixed(2)}`,
-        deposit_pct:               `${Math.round(depositPct * 100)}%`,
-        subtotal_usd:              `$${subtotal.toFixed(2)}`,
-        deposit_usd:               `$${depositDollars.toFixed(2)}`,
-        remaining_balance_pre_tax: `$${balanceBeforeTax.toFixed(2)}`
-      },
-
-      custom_text: {
-        submit: { message: "Remaining balance (pre-tax) is due after today's deposit." }
+  line_items: [{
+    quantity: 1,
+    price_data: {
+      currency: "usd",
+      unit_amount: depositCents,
+      product_data: {
+        name: `Deposit — ${packageName} (${guests} guests, ${date} ${time})`,
+        // keep the description short + human-readable
+        description: `${date} ${time} • ${packageName} • ${guests} guests`
       }
-    });
+    }
+  }],
 
-    // Keep your old behavior: mark in-memory as "booked" immediately
-    if (date) bookedDates.push(date);
+  // If you did NOT create /booking-success and /booking-cancelled pages yet,
+  // temporarily switch these to /booking-calendar#success / #cancel
+  success_url: `${process.env.SITE_URL}/booking-success`,
+  cancel_url:  `${process.env.SITE_URL}/booking-cancelled`,
 
-    return res.json({ url: session.url, checkoutUrl: session.url });
-  } catch (err) {
-    const msg = err?.raw?.message || err?.message || "Unable to create booking.";
-    console.error("Book error:", msg);
-    return res.status(400).json({ error: msg });
+  // ---- ONLY user-entered fields in metadata (no prices/percents/etc.) ----
+  metadata: {
+    // booking details
+    event_date: date,            // YYYY-MM-DD
+    start_time: time,            // HH:mm
+    package: packageId,          // e.g. "tasting"
+    package_title: packageName,  // e.g. "Tasting Menu"
+    guests: String(guests),
+
+    // contact
+    first_name: b.firstName || "",
+    last_name:  b.lastName  || "",
+    email:      email,
+    phone:      b.phone || "",
+
+    // event address
+    address_line1: b.address1 || b.address_line1 || b.address || "",
+    city:          b.city || "",
+    state:         b.state || "",
+    zip:           b.zip || "",
+    country:       "US",
+
+    // notes / acknowledgements
+    diet_notes:            b.diet || "",
+    ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
+    agreed_to_terms:       b.agreedToTerms ? "yes" : "no"
+  },
+
+  // This makes the charge easy to scan in Stripe Payments/Charges lists
+  payment_intent_data: {
+    description: `${date} ${time} — ${packageName} — ${guests} guests — ${email}`
+  },
+
+  custom_text: {
+    submit: { message: "Remaining balance (pre-tax) is due after today's deposit." }
   }
 });
 
