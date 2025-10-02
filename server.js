@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, availability fix)
+// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER)
 
 // ----------------- Imports & setup -----------------
 import express from "express";
@@ -48,6 +48,12 @@ async function initSchema() {
       reason   TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  /* Unique index so we can upsert blackout days safely */
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS blackout_unique_start
+      ON blackout_dates (start_at);
   `);
 
   console.log("✅ Database schema ready");
@@ -134,7 +140,6 @@ app.get("/api/availability", async (req, res) => {
     const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
     const monthEnd   = new Date(Date.UTC(year, month, 1, 0, 0, 0)); // first of next month
 
-    // ✅ FIXED: removed stray tstzrange(...) term that broke the WHERE clause
     const qBookings = await pool.query(
       `SELECT start_at, end_at
          FROM bookings
@@ -281,7 +286,7 @@ app.post("/api/book", async (req, res) => {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 4) Create Stripe Checkout Session (clean metadata)
+    // 4) Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
@@ -301,7 +306,6 @@ app.post("/api/book", async (req, res) => {
         }
       }],
 
-      // Send back to calendar with a flag to avoid 404s
       success_url: `${process.env.SITE_URL}/booking-calendar#success`,
       cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
 
@@ -311,18 +315,15 @@ app.post("/api/book", async (req, res) => {
         package: packageId,
         package_title: packageName,
         guests: String(guests),
-
         first_name: b.firstName || "",
         last_name:  b.lastName  || "",
         email:      email,
         phone:      b.phone || "",
-
         address_line1: b.address1 || b.address_line1 || b.address || "",
         city:          b.city || "",
         state:         b.state || "",
         zip:           b.zip || "",
         country:       "US",
-
         diet_notes:            b.diet || "",
         ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
         agreed_to_terms:       b.agreedToTerms ? "yes" : "no"
@@ -337,9 +338,7 @@ app.post("/api/book", async (req, res) => {
       }
     });
 
-    // Keep your old behavior: mark in-memory as "booked" immediately
     if (date) bookedDates.push(date);
-
     return res.json({ url: session.url, checkoutUrl: session.url });
   } catch (err) {
     const msg = err?.raw?.message || err?.message || "Unable to create booking.";
@@ -356,6 +355,65 @@ function requireAdmin(req, res, next) {
 }
 
 // ----------------- Admin APIs -----------------
+
+// Bulk add blackout dates — { dates: ["YYYY-MM-DD", ...], reason?: "text" }
+app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
+  try {
+    const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
+    const reason = (req.body?.reason || "").trim();
+    if (dates.length === 0) return res.status(400).json({ error: "Provide dates: string[] YYYY-MM-DD" });
+    if (dates.length > 365)  return res.status(400).json({ error: "Too many dates (limit 365 per request)." });
+
+    const starts = [], ends = [];
+    for (const d of dates) {
+      const start = new Date(`${d}T00:00:00.000Z`);
+      if (isNaN(start)) return res.status(400).json({ error: `Invalid date: ${d}` });
+      const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+      starts.push(start.toISOString());
+      ends.push(end.toISOString());
+    }
+
+    const vals = [];
+    const params = [];
+    for (let i = 0; i < dates.length; i++) {
+      const a = params.length + 1;
+      const b = params.length + 2;
+      const c = params.length + 3;
+      vals.push(`($${a}, $${b}, $${c})`);
+      params.push(starts[i], ends[i], reason || null);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const sql = `
+        INSERT INTO blackout_dates (start_at, end_at, reason)
+        VALUES ${vals.join(",")}
+        ON CONFLICT (start_at)
+        DO UPDATE SET
+          end_at = EXCLUDED.end_at,
+          reason = COALESCE(EXCLUDED.reason, blackout_dates.reason)
+        RETURNING (xmax = 0) AS inserted;
+      `;
+      const r = await client.query(sql, params);
+      await client.query("COMMIT");
+
+      const inserted = r.rows.filter(row => row.inserted === true).length;
+      const updated  = r.rows.length - inserted;
+      return res.json({ ok: true, inserted, updated });
+    } catch (e) {
+      await client.query("ROLLBACK");
+      console.error(e);
+      return res.status(500).json({ error: "Bulk insert failed" });
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to create bulk blackouts" });
+  }
+});
+
 app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body || {};
@@ -365,8 +423,12 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
 
     const r = await pool.query(
       `INSERT INTO blackout_dates (start_at, end_at, reason)
-       VALUES ($1,$2,$3) RETURNING id,start_at,end_at,reason`,
-      [start.toISOString(), end.toISOString(), reason || ""]
+       VALUES ($1,$2,$3)
+       ON CONFLICT (start_at) DO UPDATE
+         SET end_at = EXCLUDED.end_at,
+             reason = COALESCE(EXCLUDED.reason, blackout_dates.reason)
+       RETURNING id,start_at,end_at,reason`,
+      [start.toISOString(), end.toISOString(), (reason || "").trim() || null]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -444,6 +506,10 @@ app.get("/admin", (_req, res) => {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Calendar Admin</title>
+
+<!-- Flatpickr (multi-date picker) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+
 <style>
   :root{--ink:#222;--mut:#666;--bg:#fafafa;--card:#fff;--b:#eee;--btn:#7B8B74;--btn2:#444;}
   body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px}
@@ -484,11 +550,13 @@ app.get("/admin", (_req, res) => {
     </div>
   </div>
 
+  <!-- Blackouts: MULTI-DATE picker -->
   <div class="card">
     <div class="row two">
       <div>
-        <label>Date</label>
-        <input id="date" type="date" />
+        <label>Date(s) to Blackout</label>
+        <input id="dates" placeholder="Click dates to select multiple" />
+        <div class="mut" style="margin-top:6px">Tip: click multiple days to select; click again to unselect.</div>
       </div>
       <div>
         <label>Reason / Name (optional)</label>
@@ -496,7 +564,23 @@ app.get("/admin", (_req, res) => {
       </div>
     </div>
     <div style="margin-top:12px">
-      <button class="btn" onclick="addBlackout()">+ Add Blackout</button>
+      <button class="btn" onclick="addBulk()">+ Add Blackout(s)</button>
+    </div>
+  </div>
+
+  <!-- Manual booking: SINGLE-DATE picker -->
+  <div class="card">
+    <div class="row two">
+      <div>
+        <label>Manual Booking — Date</label>
+        <input id="dateOne" placeholder="Pick one date" />
+      </div>
+      <div>
+        <label>Customer / Note</label>
+        <input id="noteOne" placeholder="Name, email (optional)" />
+      </div>
+    </div>
+    <div style="margin-top:12px">
       <button class="btn gray" onclick="addBooking()">+ Add Manual Booking</button>
     </div>
   </div>
@@ -527,6 +611,9 @@ app.get("/admin", (_req, res) => {
   <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. The date should show as <span class="tag warn">Booked</span>.</p>
 </div>
 
+<!-- Flatpickr JS -->
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
 <script>
 const API = location.origin;
 const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localStorage.getItem("ADMIN_KEY") || "" });
@@ -534,21 +621,48 @@ const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localSt
 function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem('ADMIN_KEY', v); alert('Saved'); }
 function clearKey(){ localStorage.removeItem('ADMIN_KEY'); alert('Cleared'); }
 
-async function addBlackout(){
-  const d = document.getElementById('date').value;
-  const reason = document.getElementById('note').value;
-  if(!d) return alert('Pick a date');
-  const r = await fetch(\`\${API}/api/admin/blackouts\`, {method:'POST', headers:hdrs(), body:JSON.stringify({date:d, reason})});
-  if(!r.ok){ return alert('Error adding blackout'); }
-  alert('Blackout added'); loadMonth();
+/* Init pickers */
+const fpMulti = flatpickr("#dates", {
+  mode: "multiple",
+  dateFormat: "Y-m-d",
+  altInput: true,
+  altFormat: "M j, Y",
+  disableMobile: false
+});
+const fpOne = flatpickr("#dateOne", {
+  mode: "single",
+  dateFormat: "Y-m-d",
+  altInput: true,
+  altFormat: "M j, Y",
+  defaultDate: new Date()
+});
+
+/* BULK add via API */
+async function addBulk(){
+  const reason = document.getElementById('note').value || '';
+  const dates = fpMulti.selectedDates.map(d => fpMulti.formatDate(d, "Y-m-d"));
+  if (!dates.length) return alert("Pick at least one date.");
+  const res = await fetch(\`\${API}/api/admin/blackouts/bulk\`, {
+    method:"POST", headers:hdrs(), body:JSON.stringify({ dates, reason })
+  });
+  if (!res.ok) return alert("Error adding blackouts");
+  alert(\`\${dates.length} blackout date(s) added.\`);
+  fpMulti.clear();
+  loadMonth();
 }
+
+/* Single manual booking */
 async function addBooking(){
-  const d = document.getElementById('date').value;
-  const note = document.getElementById('note').value;
-  if(!d) return alert('Pick a date');
-  const r = await fetch(\`\${API}/api/admin/bookings\`, {method:'POST', headers:hdrs(), body:JSON.stringify({date:d, name:note, email:''})});
+  const sel = fpOne.selectedDates[0];
+  if (!sel) return alert("Pick a date.");
+  const date = fpOne.formatDate(sel, "Y-m-d");
+  const note = document.getElementById('noteOne').value || '';
+  const r = await fetch(\`\${API}/api/admin/bookings\`, {
+    method:'POST', headers:hdrs(), body:JSON.stringify({ date, name: note, email: '' })
+  });
   if(!r.ok){ return alert('Error adding booking'); }
-  alert('Booking added'); loadMonth();
+  alert('Booking added');
+  loadMonth();
 }
 
 function fmtRange(s,e){
@@ -606,7 +720,6 @@ async function delBooking(id){
 (function(){
   const d = new Date();
   document.getElementById('month').value = d.toISOString().slice(0,7);
-  document.getElementById('date').value  = d.toISOString().slice(0,10);
 })();
 </script>
 </body>
@@ -647,5 +760,5 @@ app.get("/api/dev/blackouts", async (_req, res) => {
 
 // ----------------- Start server -----------------
 app.listen(port, () => {
-  console.log(`Chef booking server listening on ${port}`);
+  console.log(\`Chef booking server listening on \${port}\`);
 });
