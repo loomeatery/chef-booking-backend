@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER + SAFE DEDUPE)
+// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER + SAFE DEDUPE + EMAIL + SUCCESS PAGE)
 
 // ----------------- Imports & setup -----------------
 import express from "express";
@@ -72,12 +72,46 @@ initSchema().catch(e => {
   process.exit(1);
 });
 
+// ----------------- Email helper (Resend) -----------------
+function fmtUSD(cents){ try { return `$${(Number(cents)/100).toFixed(2)}`; } catch { return "$0.00"; } }
+
+async function sendEmail({ to, subject, html }) {
+  try {
+    const key = process.env.RESEND_API_KEY;
+    if (!key) { console.warn("RESEND_API_KEY not set; skipping email."); return; }
+
+    const payload = {
+      from: process.env.FROM_EMAIL || "Chef Chris <bookings@privatechefchristopherlamagna.com>",
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+      reply_to: process.env.REPLY_TO || "loomeatery@gmail.com"
+    };
+
+    const resp = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+    if (!resp.ok) {
+      console.error("Email send failed:", await resp.text());
+    } else {
+      console.log(`✅ Email sent to ${payload.to.join(", ")}`);
+    }
+  } catch (e) {
+    console.error("sendEmail error:", e);
+  }
+}
+
 // =============== IMPORTANT ===============
 // Stripe requires the *raw* body on the webhook route.
 // Define the webhook route BEFORE the JSON body parser.
 // =========================================
 
-// ----------------- Stripe Webhook (auto-book on payment) -----------------
+// ----------------- Stripe Webhook (auto-book on payment + send emails) -----------------
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!STRIPE_WEBHOOK_SECRET) {
@@ -118,6 +152,39 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         );
 
         console.log(`✅ Auto-booked ${eventDate} from Stripe session ${session.id}`);
+
+        // ------ Send confirmation email (guest + admin copy) ------
+        const guestEmail = session.customer_details?.email || md.email || "";
+        const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
+        const pkgTitle   = md.package_title || md.package || "Private Event";
+        const guests     = md.guests || "";
+        const startTime  = md.start_time || "18:00";
+        const deposit    = session.amount_total ? fmtUSD(session.amount_total) : "Deposit received";
+        const successPage = `${process.env.SITE_URL}/booking-success?session_id=${session.id}`;
+
+        const html = `
+          <div style="font-family:ui-sans-serif,system-ui;line-height:1.6">
+            <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
+            <p>Hi ${fullName},</p>
+            <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${eventDate}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
+            <p>We’ve received your deposit: <strong>${deposit}</strong>.</p>
+            <p style="margin-top:12px"><strong>What happens next</strong><br>
+              I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message.</p>
+            <p style="margin-top:12px">Your confirmation link:<br>
+              <a href="${successPage}">${successPage}</a></p>
+            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+            <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
+          </div>
+        `;
+
+        if (guestEmail) {
+          await sendEmail({
+            to: [guestEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
+            subject: `Booking confirmed — ${eventDate} • ${pkgTitle}`,
+            html
+          });
+        }
+        // -----------------------------------------------------------
       }
     }
 
@@ -315,7 +382,8 @@ app.post("/api/book", async (req, res) => {
         }
       }],
 
-      success_url: `${process.env.SITE_URL}/booking-calendar#success`,
+      // ✅ Send to the confetti success page instead of a 404
+      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
 
       metadata: {
@@ -765,6 +833,49 @@ app.get("/api/dev/blackouts", async (_req, res) => {
     console.error(e);
     res.status(500).json({ error: e.message });
   }
+});
+
+// ----------------- Success page (confetti) -----------------
+app.get("/booking-success", async (req, res) => {
+  const session_id = req.query.session_id || "";
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>You're Booked!</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#1f2937;--mut:#6b7280;--btn:#7B8B74;--bg:#fafaf7;}
+  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
+  .wrap{max-width:720px;margin:0 auto;padding:40px 20px;text-align:center}
+  .card{background:#fff;border:1px solid #eee;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.05)}
+  h1{font-size:34px;margin:0 0 10px}
+  p{margin:8px 0;color:var(--mut)}
+  .cta{display:inline-block;margin-top:18px;background:var(--btn);color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;text-decoration:none}
+  .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:16px}
+  .pill{background:#f3f8f3;border:1px solid #e5efe5;border-radius:999px;padding:8px 12px;font-size:13px}
+</style></head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Congratulations! You’re all booked 🎉</h1>
+    <p>We’ve emailed your confirmation and next steps.</p>
+    <div class="row">
+      <div class="pill">Personal call to plan your menu</div>
+      <div class="pill">Day-of kitchen prep included</div>
+      <div class="pill">We handle all the details</div>
+    </div>
+    <a class="cta" href="/contact">Need anything? Get in touch</a>
+    <p style="margin-top:12px;font-size:13px">Booking ID: ${session_id}</p>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+<script>
+  confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
+  const end = Date.now() + 800;
+  (function frame(){ confetti({particleCount:3, spread:70, origin:{y:0.6}}); if(Date.now()<end) requestAnimationFrame(frame); })();
+</script>
+</body></html>`);
 });
 
 // ----------------- Start server -----------------
