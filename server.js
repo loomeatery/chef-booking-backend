@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER)
+// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER + SAFE DEDUPE)
 
 // ----------------- Imports & setup -----------------
 import express from "express";
@@ -48,6 +48,15 @@ async function initSchema() {
       reason   TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+  `);
+
+  /* ✅ SAFE DEDUPE: if you had multiple rows for the same day already,
+     remove older duplicates before adding the unique index so deploy won't fail. */
+  await pool.query(`
+    DELETE FROM blackout_dates a
+    USING blackout_dates b
+    WHERE a.start_at = b.start_at
+      AND a.id < b.id;
   `);
 
   /* Unique index so we can upsert blackout days safely */
@@ -760,5 +769,5 @@ app.get("/api/dev/blackouts", async (_req, res) => {
 
 // ----------------- Start server -----------------
 app.listen(port, () => {
-  console.log(\`Chef booking server listening on \${port}\`);
+  console.log(`Chef booking server listening on ${port}`);
 });
