@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER + SAFE DEDUPE + EMAIL + SUCCESS PAGE)
+// server.js — COMPLETE DROP-IN (ESM, availability fix + BULK BLACKOUTS + FLATPICKR MULTI-PICKER + SAFE DEDUPE + EMAIL + SUCCESS PAGE + ✅ MONTH-FILTERED ADMIN LISTS)
 
 // ----------------- Imports & setup -----------------
 import express from "express";
@@ -50,8 +50,7 @@ async function initSchema() {
     );
   `);
 
-  /* ✅ SAFE DEDUPE: if you had multiple rows for the same day already,
-     remove older duplicates before adding the unique index so deploy won't fail. */
+  /* ✅ SAFE DEDUPE before unique index */
   await pool.query(`
     DELETE FROM blackout_dates a
     USING blackout_dates b
@@ -59,7 +58,6 @@ async function initSchema() {
       AND a.id < b.id;
   `);
 
-  /* Unique index so we can upsert blackout days safely */
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS blackout_unique_start
       ON blackout_dates (start_at);
@@ -554,7 +552,27 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// Internal list for admin page
+// ✅ New: Month-filtered list for BLACKOUTS (for /admin)
+app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
+  try {
+    const year = Number(req.query.year), month = Number(req.query.month);
+    if (!year || !month) return res.status(400).json([]);
+    const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
+    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+    const r = await pool.query(
+      `SELECT id,start_at,end_at,reason,created_at
+         FROM blackout_dates
+        WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
+        ORDER BY start_at ASC`,
+      [start.toISOString(), end.toISOString()]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error(e); res.status(500).json([]);
+  }
+});
+
+// Internal list for BOOKINGS (admin page)
 app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -589,7 +607,8 @@ app.get("/admin", (_req, res) => {
 
 <style>
   :root{--ink:#222;--mut:#666;--bg:#fafafa;--card:#fff;--b:#eee;--btn:#7B8B74;--btn2:#444;}
-  body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px}
+  html,body{height:100%}
+  body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px;overflow:auto}
   .wrap{max-width:900px;margin:0 auto}
   h1{margin:0 0 8px}
   .card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:16px;margin:12px 0}
@@ -601,11 +620,13 @@ app.get("/admin", (_req, res) => {
   .btn{display:inline-block;background:var(--btn);color:#fff;border:none;border-radius:999px;padding:10px 18px;font-weight:700;cursor:pointer}
   .btn.gray{background:var(--btn2)}
   table{width:100%;border-collapse:collapse}
-  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left}
+  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
   .mut{color:var(--mut);font-size:12px}
   .tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
   .tag.ok{border-color:#cfead2;background:#eef9ef}
   .tag.warn{border-color:#f3e3cc;background:#fff6ea}
+  /* Make tables scroll on narrow screens if needed */
+  .table-wrap{overflow:auto}
 </style>
 </head>
 <body>
@@ -670,19 +691,27 @@ app.get("/admin", (_req, res) => {
       </div>
       <div>
         <label>&nbsp;</label>
-        <button class="btn" onclick="loadMonth()">Load Month</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap">
+          <button class="btn" onclick="loadMonth()">Load Month</button>
+          <button class="btn gray" onclick="shiftMonth(-1)">◀︎ Prev</button>
+          <button class="btn gray" onclick="shiftMonth(1)">Next ▶︎</button>
+        </div>
       </div>
     </div>
 
     <h3 style="margin:16px 0 8px">Blackouts</h3>
-    <table id="tblBlackouts"><thead>
-      <tr><th>ID</th><th>Date(s)</th><th>Reason</th><th></th></tr>
-    </thead><tbody></tbody></table>
+    <div class="table-wrap">
+      <table id="tblBlackouts"><thead>
+        <tr><th>ID</th><th>Date(s)</th><th>Reason</th><th></th></tr>
+      </thead><tbody></tbody></table>
+    </div>
 
     <h3 style="margin:16px 0 8px">Bookings</h3>
-    <table id="tblBookings"><thead>
-      <tr><th>ID</th><th>Date(s)</th><th>Status</th><th>Customer</th><th></th></tr>
-    </thead><tbody></tbody></table>
+    <div class="table-wrap">
+      <table id="tblBookings"><thead>
+        <tr><th>ID</th><th>Date(s)</th><th>Status</th><th>Customer</th><th></th></tr>
+      </thead><tbody></tbody></table>
+    </div>
   </div>
 
   <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. The date should show as <span class="tag warn">Booked</span>.</p>
@@ -751,34 +780,58 @@ function fmtRange(s,e){
   return one===two ? one : \`\${one} → \${two}\`;
 }
 
-async function loadMonth(){
+function getMonthParts(){
   const m = document.getElementById('month').value;
-  if(!m){ return alert('Pick a month'); }
+  if(!m){ return null; }
   const [yy,mm] = m.split('-');
+  return { yy, mm };
+}
 
-  const q1 = await fetch(\`\${API}/api/dev/blackouts\`);
+function shiftMonth(delta){
+  const parts = getMonthParts(); if(!parts){ return; }
+  const d = new Date(Number(parts.yy), Number(parts.mm)-1, 1);
+  d.setMonth(d.getMonth() + delta);
+  document.getElementById('month').value = d.toISOString().slice(0,7);
+  loadMonth();
+}
+
+async function loadMonth(){
+  const parts = getMonthParts();
+  if(!parts){ return alert('Pick a month'); }
+  const yy = parts.yy, mm = parts.mm;
+
+  // ✅ Month-filtered blackouts and bookings
+  const q1 = await fetch(\`\${API}/__admin/list-blackouts?year=\${yy}&month=\${Number(mm)}\`, {headers:hdrs()});
   const blackouts = q1.ok ? await q1.json() : [];
 
-  const q2 = await fetch(\`\${API}/__admin/list-bookings?year=\${yy}&month=\${Number(mm)}\`,{headers:hdrs()});
+  const q2 = await fetch(\`\${API}/__admin/list-bookings?year=\${yy}&month=\${Number(mm)}\`, {headers:hdrs()});
   const bookings = q2.ok ? await q2.json() : [];
 
   const tb1 = document.querySelector('#tblBlackouts tbody'); tb1.innerHTML='';
-  blackouts.forEach(b=>{
-    const tr=document.createElement('tr');
-    tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${b.reason||''}</td>
-      <td><button class="btn gray" onclick="delBlackout(\${b.id})">Delete</button></td>\`;
-    tb1.appendChild(tr);
-  });
+  if(blackouts.length===0){
+    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="4" class="mut">No blackouts this month.</td>'; tb1.appendChild(tr);
+  } else {
+    blackouts.forEach(b=>{
+      const tr=document.createElement('tr');
+      tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${b.reason||''}</td>
+        <td><button class="btn gray" onclick="delBlackout(\${b.id})">Delete</button></td>\`;
+      tb1.appendChild(tr);
+    });
+  }
 
   const tb2 = document.querySelector('#tblBookings tbody'); tb2.innerHTML='';
-  bookings.forEach(b=>{
-    const tag = b.status==='confirmed' ? '<span class="tag ok">confirmed</span>' : '<span class="tag">'+b.status+'</span>';
-    const who = (b.customer_name||'') + (b.customer_email? ' • '+b.customer_email : '');
-    const tr=document.createElement('tr');
-    tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${tag}</td><td>\${who}</td>
-      <td><button class="btn gray" onclick="delBooking(\${b.id})">Delete</button></td>\`;
-    tb2.appendChild(tr);
-  });
+  if(bookings.length===0){
+    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="5" class="mut">No bookings this month.</td>'; tb2.appendChild(tr);
+  } else {
+    bookings.forEach(b=>{
+      const tag = b.status==='confirmed' ? '<span class="tag ok">confirmed</span>' : '<span class="tag">'+b.status+'</span>';
+      const who = (b.customer_name||'') + (b.customer_email? ' • '+b.customer_email : '');
+      const tr=document.createElement('tr');
+      tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${tag}</td><td>\${who}</td>
+        <td><button class="btn gray" onclick="delBooking(\${b.id})">Delete</button></td>\`;
+      tb2.appendChild(tr);
+    });
+  }
 }
 
 async function delBlackout(id){
@@ -796,7 +849,9 @@ async function delBooking(id){
 
 (function(){
   const d = new Date();
-  document.getElementById('month').value = d.toISOString().slice(0,7);
+  document.getElementById('month').value = d.toISOString().slice(0,7); // YYYY-MM
+  // Auto-load on open so it never looks "stuck"
+  loadMonth();
 })();
 </script>
 </body>
@@ -821,6 +876,7 @@ app.get("/api/dev/seed-blackout", async (_req, res) => {
   }
 });
 
+// (kept for debugging; admin page no longer uses this to render lists)
 app.get("/api/dev/blackouts", async (_req, res) => {
   try {
     const r = await pool.query(
