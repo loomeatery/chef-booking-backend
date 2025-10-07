@@ -201,30 +201,28 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           ? `<img src="${logoUrl}" alt="Chef Chris" width="48" height="48" style="border-radius:50%;display:block;margin-bottom:8px"/>`
           : "";
 
-        const html = `
-          <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
-            ${logoBlock}
-            <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
-            <p>Hi ${fullName},</p>
-            <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
-            <p>We’ve received your deposit: <strong>${depositText}</strong>.</p>
+const html = `
+  <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
+    ${logoBlock}
+    <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
+    <p>Hi ${fullName},</p>
+    <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
+    <p>We’ve received your deposit: <strong>${depositText}</strong>.</p>
 
-            <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
-              <div style="font-size:13px;color:#555">Confirmation code</div>
-              <div style="font-weight:800;font-size:20px;letter-spacing:1px">${confCode}</div>
-            </div>
+    <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
+      <div style="font-size:13px;color:#555">Confirmation code</div>
+      <div style="font-weight:800;font-size:20px;letter-spacing:1px">${confCode}</div>
+    </div>
 
-            ${receiptUrl ? `<p><a href="${receiptUrl}">View your Stripe receipt</a></p>` : ""}
+    ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
 
-            <p style="margin-top:12px"><strong>What happens next</strong><br>
-              I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message.</p>
+    <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
+    <p>I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>.</p>
 
-            <p style="margin-top:12px"><a href="${successPage}">${successPage}</a></p>
-
-            <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-            <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
-          </div>
-        `;
+    <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+    <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
+  </div>
+`;
 
         if (guestEmail) {
           await sendEmail({
