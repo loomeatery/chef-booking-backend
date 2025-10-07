@@ -1,14 +1,13 @@
-// server.js — FULL DROP-IN (ESM, Render-ready)
+// server.js — COMPLETE DROP-IN (ESM)
 // Service area: Manhattan, Brooklyn, Queens, Nassau, Suffolk
 // Emails: guest + admin via Resend (logo + confirmation code + Stripe receipt link)
-// Stripe webhook uses RAW body (keep route BEFORE express.json)
+// Stripe webhook uses RAW body (keep route before express.json)
 
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
 import pkg from "pg";
-// Node 18+ has global fetch; no import needed.
 
 dotenv.config();
 
@@ -341,7 +340,31 @@ async function verifyRecaptcha(token, ip) {
   }
 }
 
-// ----------------- Book (Stripe Checkout + promo codes) -----------------
+// ----------------- Quote -----------------
+app.post("/api/quote", (req, res) => {
+  try {
+    const { pkg } = req.body || {};
+    const guests = Number(req.body?.guests || 0);
+
+    const PKG = {
+      tasting:  { perPerson: 200, depositPct: 0.30 },
+      family:   { perPerson: 200, depositPct: 0.30 },
+      cocktail: { perPerson: 125, depositPct: 0.30 },
+    };
+    const sel = PKG[pkg] || PKG.tasting;
+
+    const g        = Math.max(1, guests);
+    const subtotal = sel.perPerson * g;
+    const deposit  = Math.round(subtotal * sel.depositPct);
+
+    res.json({ subtotal, tax: 0, total: subtotal, deposit });
+  } catch (err) {
+    console.error("Quote error:", err);
+    res.status(400).json({ error: "Unable to create quote." });
+  }
+});
+
+// ----------------- Book (Stripe Checkout) -----------------
 app.post("/api/book", async (req, res) => {
   try {
     if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
@@ -396,27 +419,13 @@ app.post("/api/book", async (req, res) => {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 3.5) Optional: auto-apply promotion code if provided
-    const promoRaw = (b.promo || b.promotionCode || b.code || "").trim();
-    let discounts = [];
-    if (promoRaw) {
-      try {
-        const pc = await stripe.promotionCodes.list({ code: promoRaw, active: true, limit: 1 });
-        if (pc.data[0]?.id) discounts = [{ promotion_code: pc.data[0].id }];
-      } catch (e) {
-        console.warn("Promo lookup failed:", e.message);
-      }
-    }
-
     // 4) Create Stripe Checkout Session
-    const sessionConfig = {
+    const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
       billing_address_collection: "required",
       phone_number_collection: { enabled: true },
       automatic_tax: { enabled: false },
-
-      allow_promotion_codes: true, // 👈 adds the “Add promotion code” box
 
       line_items: [{
         quantity: 1,
@@ -460,12 +469,7 @@ app.post("/api/book", async (req, res) => {
       custom_text: {
         submit: { message: "Remaining balance (pre-tax) is due after today's deposit." }
       }
-    };
-
-    // Only attach discounts if a valid promo was found
-    if (discounts.length) sessionConfig.discounts = discounts;
-
-    const session = await stripe.checkout.sessions.create(sessionConfig);
+    });
 
     if (date) bookedDates.push(date);
     return res.json({ url: session.url, checkoutUrl: session.url });
@@ -771,8 +775,8 @@ app.get("/admin", (_req, res) => {
 const API = location.origin;
 const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localStorage.getItem("ADMIN_KEY") || "" });
 
-function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem("ADMIN_KEY", v); alert('Saved'); }
-function clearKey(){ localStorage.removeItem("ADMIN_KEY"); alert('Cleared'); }
+function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem('ADMIN_KEY', v); alert('Saved'); }
+function clearKey(){ localStorage.removeItem('ADMIN_KEY'); alert('Cleared'); }
 
 const fpMulti = flatpickr("#dates", { mode: "multiple", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", disableMobile: false });
 const fpOne   = flatpickr("#dateOne", { mode: "single", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", defaultDate: new Date() });
