@@ -427,6 +427,8 @@ app.post("/api/book", async (req, res) => {
       phone_number_collection: { enabled: true },
       automatic_tax: { enabled: false },
 
+      allow_promotion_codes: true,
+
       line_items: [{
         quantity: 1,
         price_data: {
