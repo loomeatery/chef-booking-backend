@@ -1,6 +1,6 @@
-// server.js — FULL DROP-IN (production-ready)
-// Node 18+, ESM. Start with: node server.js  (or set as Render start command)
+// server.js — FULL DROP-IN (email templates upgraded: logo, code, receipt link, admin copy)
 
+// ----------------- Imports & setup -----------------
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -32,7 +32,7 @@ async function initSchema() {
       id BIGSERIAL PRIMARY KEY,
       start_at TIMESTAMPTZ NOT NULL,
       end_at   TIMESTAMPTZ NOT NULL,
-      status   TEXT NOT NULL DEFAULT 'confirmed', -- pending|confirmed|canceled
+      status   TEXT NOT NULL DEFAULT 'confirmed',
       customer_name  TEXT,
       customer_email TEXT,
       stripe_session_id TEXT UNIQUE,
@@ -50,7 +50,7 @@ async function initSchema() {
     );
   `);
 
-  /* ✅ SAFE DEDUPE before unique index */
+  // de-dupe before unique index
   await pool.query(`
     DELETE FROM blackout_dates a
     USING blackout_dates b
@@ -78,12 +78,16 @@ async function sendEmail({ to, subject, html }) {
     const key = process.env.RESEND_API_KEY;
     if (!key) { console.warn("RESEND_API_KEY not set; skipping email."); return; }
 
+    // NOTE: FROM_EMAIL must be in one of these formats:
+    // "Name <email@example.com>"  OR  "email@example.com"
+    const fromField = (process.env.FROM_EMAIL || "Chef Chris <onboarding@resend.dev>").trim();
+
     const payload = {
-      from: process.env.FROM_EMAIL || "Chef Chris <bookings@privatechefchristopherlamagna.com>",
+      from: fromField,
       to: Array.isArray(to) ? to : [to],
       subject,
       html,
-      reply_to: process.env.REPLY_TO || "loomeatery@gmail.com"
+      reply_to: (process.env.REPLY_TO || "loomeatery@gmail.com").trim()
     };
 
     const resp = await fetch("https://api.resend.com/emails", {
@@ -104,9 +108,12 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
-// ========================================================
-// Stripe Webhook (must come BEFORE express.json middleware)
-// ========================================================
+// =============== IMPORTANT ===============
+// Stripe requires the *raw* body on the webhook route.
+// Define the webhook route BEFORE the JSON body parser.
+// =========================================
+
+// ----------------- Stripe Webhook (auto-book on payment + send emails) -----------------
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!STRIPE_WEBHOOK_SECRET) {
@@ -148,34 +155,84 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
         console.log(`✅ Auto-booked ${eventDate} from Stripe session ${session.id}`);
 
-        // ------ Send confirmation email (guest + admin copy) ------
+        // ------ Compose upgraded confirmation email ------
         const guestEmail = session.customer_details?.email || md.email || "";
         const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
         const pkgTitle   = md.package_title || md.package || "Private Event";
-        const guests     = md.guests || "";
         const startTime  = md.start_time || "18:00";
-        const deposit    = session.amount_total ? fmtUSD(session.amount_total) : "Deposit received";
-        const successPage = `${process.env.SITE_URL}/booking-success?session_id=${session.id}`;
+        const guests     = Number(md.guests || 0);
+
+        // Pricing math (remainder pre-tax)
+        const perPerson  = Number(md.per_person || (md.package === "cocktail" ? 125 : 200));
+        const depositPct = Number(md.deposit_pct || 0.30);
+        const subtotal   = perPerson * guests;
+        const depositUSD = (session.amount_total || 0) / 100;
+        const balance    = Math.max(0, subtotal - depositUSD);
+
+        // Stripe receipt URL
+        let receiptUrl = "";
+        try {
+          const s = await stripe.checkout.sessions.retrieve(session.id, { expand: ["payment_intent.latest_charge"] });
+          receiptUrl = s?.payment_intent?.latest_charge?.receipt_url || "";
+        } catch {}
+
+        // Friendly confirmation code
+        const confCode = `CL-${String(session.id).slice(-8).toUpperCase()}`;
+
+        // Logo / thumbnail (use env var if set; otherwise use site icon)
+        const siteUrl = (process.env.SITE_URL || "https://www.privatechefchristopherlamagna.com").replace(/\/+$/,"");
+        const logoUrl = (process.env.EMAIL_LOGO_URL && process.env.EMAIL_LOGO_URL.trim()) || `${siteUrl}/favicon.ico`;
 
         const html = `
-          <div style="font-family:ui-sans-serif,system-ui;line-height:1.6">
-            <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
+          <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;color:#1f2937">
+            <div style="text-align:center;margin-bottom:14px">
+              <img src="${logoUrl}" alt="Chef Chris" style="max-width:96px;border-radius:999px;border:1px solid #eee">
+            </div>
+
+            <h2 style="margin:0 0 6px">You're booked! 🎉</h2>
             <p>Hi ${fullName},</p>
+
             <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${eventDate}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
-            <p>We’ve received your deposit: <strong>${deposit}</strong>.</p>
-            <p style="margin-top:12px"><strong>What happens next</strong><br>
+
+            <div style="border:1px solid #eee;border-radius:10px;padding:12px;margin:12px 0">
+              <div style="display:flex;justify-content:space-between"><span>Subtotal</span><strong>$${subtotal.toFixed(2)}</strong></div>
+              <div style="display:flex;justify-content:space-between;color:#6b7280"><span>Deposit received</span><strong>$${depositUSD.toFixed(2)}</strong></div>
+              <div style="height:1px;background:#eee;margin:8px 0"></div>
+              <div style="display:flex;justify-content:space-between"><span>Balance due (pre-tax)</span><strong>$${balance.toFixed(2)}</strong></div>
+            </div>
+
+            <p style="margin:12px 0 6px"><strong>Confirmation code:</strong>
+              <span style="font-family:monospace;background:#f6f6f6;border:1px solid #eee;border-radius:6px;padding:2px 6px">${confCode}</span>
+            </p>
+
+            ${receiptUrl ? `
+              <p style="margin:10px 0">
+                <a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a>
+              </p>` : `
+              <p style="color:#6b7280;margin-top:10px">You’ll also receive a Stripe receipt email in live mode.</p>`}
+
+            <p style="margin-top:14px"><strong>What happens next</strong><br>
               I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message.</p>
-            <p style="margin-top:12px">Your confirmation link:<br>
-              <a href="${successPage}">${successPage}</a></p>
+
             <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-            <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
+            <p style="color:#6b7280;font-size:13px">Questions? Reply to this email anytime.</p>
           </div>
         `;
 
+        const adminTo = (process.env.ADMIN_EMAIL || "loomeatery@gmail.com").trim();
+
         if (guestEmail) {
+          // Send guest email
           await sendEmail({
-            to: [guestEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
+            to: guestEmail,
             subject: `Booking confirmed — ${eventDate} • ${pkgTitle}`,
+            html
+          });
+
+          // Separate admin copy
+          await sendEmail({
+            to: adminTo,
+            subject: `[Admin Copy] Booking — ${eventDate} • ${pkgTitle} • ${confCode}`,
             html
           });
         }
@@ -190,13 +247,11 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
   }
 });
 
-// =====================
-// Normal app middleware
-// =====================
-app.use(cors({ origin: process.env.SITE_URL || true, methods: ["GET","POST","DELETE"] }));
+// ----------------- Normal middleware (after webhook) -----------------
+app.use(cors());
 app.use(express.json());
 
-// ----------------- In-memory fallback (for availability calc) -----------------
+// ----------------- In-memory fallback (leave intact) -----------------
 let bookedDates = [];
 
 // ----------------- Health -----------------
@@ -211,7 +266,7 @@ app.get("/api/availability", async (req, res) => {
     if (!year || !month) return res.status(400).json({ error: "Missing year or month" });
 
     const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
-    const monthEnd   = new Date(Date.UTC(year, month, 1, 0, 0, 0)); // first of next month
+    const monthEnd   = new Date(Date.UTC(year, month, 1, 0, 0, 0));
 
     const qBookings = await pool.query(
       `SELECT start_at, end_at
@@ -267,7 +322,7 @@ async function verifyRecaptcha(token, ip) {
     const secret = process.env.RECAPTCHA_SECRET;
     if (!secret) {
       console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification.");
-      return true; // allow bookings while wiring up
+      return true; // allow while wiring up
     }
     if (!token) return false;
 
@@ -286,13 +341,6 @@ async function verifyRecaptcha(token, ip) {
     console.error("reCAPTCHA verify error:", e);
     return false;
   }
-}
-
-// ----------------- SERVICE AREA ENFORCEMENT (server-side) -----------------
-// Manhattan: 100xx–102xx; Nassau: 110xx–115xx; Suffolk: 117xx–119xx
-const ZIP_ALLOW = /^(10[0-2]\d{2}|11[0-5]\d{2}|11[7-9]\d{2})$/;
-function allowedArea(state, zip){
-  return (String(state).toUpperCase() === "NY") && ZIP_ALLOW.test(String(zip||"").trim());
 }
 
 // ----------------- Quote -----------------
@@ -349,14 +397,7 @@ app.post("/api/book", async (req, res) => {
     if (!email) return res.status(400).json({ error: "Email is required." });
     if (!Number.isFinite(guests) || guests < 1) return res.status(400).json({ error: "Guest count is invalid." });
 
-    // ✅ 3) AREA CHECK (server authority)
-    const state = b.state;
-    const zip   = b.zip;
-    if (!allowedArea(state, zip)) {
-      return res.status(400).json({ error: "We currently serve Manhattan, Nassau & Suffolk (NY) only." });
-    }
-
-    // 4) Pricing
+    // 3) Pricing
     const PKG = {
       tasting:  { perPerson: 200, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
@@ -368,11 +409,12 @@ app.post("/api/book", async (req, res) => {
     const subtotal         = perPerson * guests;
     const depositDollars   = Math.round(subtotal * depositPct);
     const depositCents     = depositDollars * 100;
+    const balanceBeforeTax = Math.max(0, subtotal - depositDollars);
     if (!Number.isFinite(depositCents) || depositCents < 50) {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 5) Stripe Checkout Session
+    // 4) Create Stripe Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
@@ -392,8 +434,8 @@ app.post("/api/book", async (req, res) => {
         }
       }],
 
-      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
+      success_url: `${process.env.SITE_URL.replace(/\/+$/,"")}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url:  `${process.env.SITE_URL.replace(/\/+$/,"")}/booking-calendar#cancel`,
 
       metadata: {
         event_date: date,
@@ -401,18 +443,27 @@ app.post("/api/book", async (req, res) => {
         package: packageId,
         package_title: packageName,
         guests: String(guests),
+
+        // contact
         first_name: b.firstName || "",
         last_name:  b.lastName  || "",
         email:      email,
         phone:      b.phone || "",
+
+        // address
         address_line1: b.address1 || b.address_line1 || b.address || "",
         city:          b.city || "",
         state:         b.state || "",
         zip:           b.zip || "",
         country:       "US",
+
         diet_notes:            b.diet || "",
         ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
-        agreed_to_terms:       b.agreedToTerms ? "yes" : "no"
+        agreed_to_terms:       b.agreedToTerms ? "yes" : "no",
+
+        // pricing hints for webhook math
+        per_person:  String(perPerson),
+        deposit_pct: String(depositPct)
       },
 
       payment_intent_data: {
@@ -441,8 +492,6 @@ function requireAdmin(req, res, next) {
 }
 
 // ----------------- Admin APIs -----------------
-
-// Bulk add blackout dates — { dates: ["YYYY-MM-DD", ...], reason?: "text" }
 app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
   try {
     const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
@@ -505,8 +554,7 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
     const { date, reason } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
-
+    const end = new Date(start); end.setUTCDate(end.getUTCFullDate() + 1);
     const r = await pool.query(
       `INSERT INTO blackout_dates (start_at, end_at, reason)
        VALUES ($1,$2,$3)
@@ -563,7 +611,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ✅ Month-filtered list for BLACKOUTS (for /admin)
+// Month-filtered lists (admin page helpers)
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -583,7 +631,6 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   }
 });
 
-// Internal list for BOOKINGS (admin page)
 app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -613,7 +660,6 @@ app.get("/admin", (_req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Calendar Admin</title>
 
-<!-- Flatpickr (multi-date picker) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
 
 <style>
@@ -658,7 +704,6 @@ app.get("/admin", (_req, res) => {
     </div>
   </div>
 
-  <!-- Blackouts: MULTI-DATE picker -->
   <div class="card">
     <div class="row two">
       <div>
@@ -676,7 +721,6 @@ app.get("/admin", (_req, res) => {
     </div>
   </div>
 
-  <!-- Manual booking: SINGLE-DATE picker -->
   <div class="card">
     <div class="row two">
       <div>
@@ -727,7 +771,6 @@ app.get("/admin", (_req, res) => {
   <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. The date should show as <span class="tag warn">Booked</span>.</p>
 </div>
 
-<!-- Flatpickr JS -->
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 
 <script>
@@ -737,45 +780,26 @@ const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localSt
 function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem('ADMIN_KEY', v); alert('Saved'); }
 function clearKey(){ localStorage.removeItem('ADMIN_KEY'); alert('Cleared'); }
 
-/* Init pickers */
-const fpMulti = flatpickr("#dates", {
-  mode: "multiple",
-  dateFormat: "Y-m-d",
-  altInput: true,
-  altFormat: "M j, Y",
-  disableMobile: false
-});
-const fpOne = flatpickr("#dateOne", {
-  mode: "single",
-  dateFormat: "Y-m-d",
-  altInput: true,
-  altFormat: "M j, Y",
-  defaultDate: new Date()
-});
+const fpMulti = flatpickr("#dates", { mode: "multiple", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", disableMobile: false });
+const fpOne   = flatpickr("#dateOne", { mode: "single", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", defaultDate: new Date() });
 
-/* BULK add via API */
 async function addBulk(){
   const reason = document.getElementById('note').value || '';
   const dates = fpMulti.selectedDates.map(d => fpMulti.formatDate(d, "Y-m-d"));
   if (!dates.length) return alert("Pick at least one date.");
-  const res = await fetch(\`\${API}/api/admin/blackouts/bulk\`, {
-    method:"POST", headers:hdrs(), body:JSON.stringify({ dates, reason })
-  });
+  const res = await fetch(\`\${API}/api/admin/blackouts/bulk\`, { method:"POST", headers:hdrs(), body:JSON.stringify({ dates, reason }) });
   if (!res.ok) return alert("Error adding blackouts");
   alert(\`\${dates.length} blackout date(s) added.\`);
   fpMulti.clear();
   loadMonth();
 }
 
-/* Single manual booking */
 async function addBooking(){
   const sel = fpOne.selectedDates[0];
   if (!sel) return alert("Pick a date.");
   const date = fpOne.formatDate(sel, "Y-m-d");
   const note = document.getElementById('noteOne').value || '';
-  const r = await fetch(\`\${API}/api/admin/bookings\`, {
-    method:'POST', headers:hdrs(), body:JSON.stringify({ date, name: note, email: '' })
-  });
+  const r = await fetch(\`\${API}/api/admin/bookings\`, { method:'POST', headers:hdrs(), body:JSON.stringify({ date, name: note, email: '' }) });
   if(!r.ok){ return alert('Error adding booking'); }
   alert('Booking added');
   loadMonth();
@@ -810,7 +834,6 @@ async function loadMonth(){
   if(!parts){ return alert('Pick a month'); }
   const yy = parts.yy, mm = parts.mm;
 
-  // ✅ Month-filtered blackouts and bookings
   const q1 = await fetch(\`\${API}/__admin/list-blackouts?year=\${yy}&month=\${Number(mm)}\`, {headers:hdrs()});
   const blackouts = q1.ok ? await q1.json() : [];
 
@@ -859,8 +882,7 @@ async function delBooking(id){
 
 (function(){
   const d = new Date();
-  document.getElementById('month').value = d.toISOString().slice(0,7); // YYYY-MM
-  // Auto-load on open so it never looks "stuck"
+  document.getElementById('month').value = d.toISOString().slice(0,7);
   loadMonth();
 })();
 </script>
@@ -868,7 +890,7 @@ async function delBooking(id){
 </html>`);
 });
 
-// ----------------- Dev helpers (optional) -----------------
+// ----------------- Dev helpers -----------------
 app.get("/api/dev/seed-blackout", async (_req, res) => {
   try {
     const now = new Date();
@@ -886,7 +908,6 @@ app.get("/api/dev/seed-blackout", async (_req, res) => {
   }
 });
 
-// (kept for debugging; admin page no longer uses this to render lists)
 app.get("/api/dev/blackouts", async (_req, res) => {
   try {
     const r = await pool.query(
@@ -935,7 +956,7 @@ app.get("/booking-success", async (req, res) => {
     <p style="margin-top:12px;font-size:13px">Booking ID: ${session_id}</p>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.2/dist/confetti.browser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 <script>
   confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
   const end = Date.now() + 800;
