@@ -145,12 +145,140 @@
     return n.toLocaleString("en-US",{style:"currency",currency:"USD"});
   }
 
-  async function fetchJson(path){
-    const r = await fetch(path, { headers: headers() });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error||"Request failed");
-    return j;
+ <script>
+  // ... keep everything above as-is
+
+  async function loadBookings(){
+    const y = yearSel.value, m = monthSel.value;
+    const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
+    const el = document.getElementById("bookingsWrap");
+    if (!Array.isArray(data) || data.length===0){
+      el.innerHTML = `<div class="empty">No bookings this month.</div>`;
+      return;
+    }
+
+    function yesNoPill(v,label){
+      if (!v) return "";
+      return `<span class="pill" style="margin-right:6px">${label}</span>`;
+    }
+    function safe(s){ return (s ?? "").toString().trim(); }
+    function fmtAddr(b){
+      const p = [
+        safe(b.address_line1 || b.address1),
+        [safe(b.city), safe(b.state), safe(b.zip)].filter(Boolean).join(", ")
+      ].filter(Boolean);
+      return p.join("<br>");
+    }
+    function usd(cents){
+      const n = Number(cents||0)/100;
+      return n.toLocaleString("en-US",{style:"currency",currency:"USD"});
+    }
+    function fmtDate(iso){
+      if(!iso) return "";
+      const d = new Date(iso);
+      return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+    }
+
+    const rows = data.map((b,i) => {
+      const day = fmtDate(b.start_at);
+      const name = safe(b.customer_name) || "—";
+      const email = safe(b.customer_email) || "—";
+      const pkg = safe(b.package_title) || "—";
+      const guests = b.guests ?? "—";
+      const dep = usd(b.deposit_cents);
+      const status = safe(b.status) || "—";
+      const addons = `${yesNoPill(b.bartender, "Bartender")}${yesNoPill(b.tablescape, "Tablescape")}`;
+      const addr = fmtAddr(b);
+      const phone = safe(b.phone);
+      const diet  = safe(b.diet_notes);
+      const sub   = usd(b.subtotal_cents);
+      const bal   = usd(b.balance_cents);
+
+      const rowId = `bkrow-${i}`;
+
+      return `
+        <tr>
+          <td>${day}</td>
+          <td>
+            <div>${name}</div>
+            <div class="mut" style="font-size:12px">${email}</div>
+          </td>
+          <td>${pkg}</td>
+          <td>${guests}</td>
+          <td>${addons || "—"}</td>
+          <td>${dep}</td>
+          <td><span class="pill">${status}</span></td>
+          <td class="right">
+            <button class="btn alt" data-toggle="${rowId}">View</button>
+            <button class="btn alt" data-del-booking="${b.id}" style="margin-left:6px">Delete</button>
+          </td>
+        </tr>
+        <tr id="${rowId}" style="display:none;background:#fafdfb">
+          <td colspan="8">
+            <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px">
+              <div>
+                <div class="mut" style="margin-bottom:6px">Address</div>
+                <div>${addr || "—"}</div>
+                <div class="mut" style="margin-top:10px">Phone</div>
+                <div>${phone || "—"}</div>
+                <div class="mut" style="margin-top:10px">Diet notes</div>
+                <div style="white-space:pre-wrap">${diet || "—"}</div>
+              </div>
+              <div>
+                <div class="mut" style="margin-bottom:6px">Amounts</div>
+                <div>Subtotal: <strong>${sub}</strong></div>
+                <div>Deposit: <strong>${dep}</strong></div>
+                <div>Balance: <strong>${bal}</strong></div>
+              </div>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    el.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Date</th>
+          <th>Customer</th>
+          <th>Package</th>
+          <th>Guests</th>
+          <th>Add-ons</th>
+          <th>Deposit</th>
+          <th>Status</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+
+    // Toggle details
+    el.querySelectorAll("[data-toggle]").forEach(btn=>{
+      btn.onclick = () => {
+        const id = btn.getAttribute("data-toggle");
+        const row = document.getElementById(id);
+        row.style.display = row.style.display === "none" ? "" : "none";
+        btn.textContent = row.style.display === "none" ? "View" : "Hide";
+      };
+    });
+
+    // Delete booking (use for test rows only)
+    el.querySelectorAll("[data-del-booking]").forEach(btn=>{
+      btn.onclick = async () => {
+        if (!confirm("Delete this booking? (Use for test rows only)")) return;
+        const id = btn.getAttribute("data-del-booking");
+        const r = await fetch(`${BASE}/api/admin/bookings/${id}`, {
+          method:"DELETE", headers: headers()
+        });
+        if (!r.ok) { alert("Delete failed"); return; }
+        loadBookings();
+      };
+    });
   }
+
+  // ... keep everything below as-is
+</script>
+
 
   // ----- LOADERS -----
   async function loadBookings(){
