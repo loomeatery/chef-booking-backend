@@ -1,423 +1,369 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>Chef Admin</title>
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     :root{
-      --green:#2e7d5a;
-      --green-dark:#1f5e41;
-      --bg:#f6faf7;
+      --ink:#183027;
+      --mut:#6b7a71;
+      --bg:#f6f7f5;
       --card:#ffffff;
-      --mut:#6b7280;
-      --line:#e5e7eb;
-      --danger:#b91c1c;
-      --pill:#eaf6ef;
+      --green:#2e7d32;
+      --green-2:#1b5e20;
+      --btn:#2f6f4f;
+      --pill:#e9f5ee;
+      --red:#e53935;
+      --red-2:#b71c1c;
+      --border:#e6ebe8;
+      --ring:rgba(46,125,50,.12);
     }
     *{box-sizing:border-box}
-    body{margin:0;background:var(--bg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
-    .bar{background:var(--green);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-    .bar h1{font-size:18px;margin:0;font-weight:800;letter-spacing:.3px}
-    .bar .sp{flex:1}
-    .keyctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-    .keyctl input{padding:8px 10px;border-radius:8px;border:1px solid #125634;min-width:260px}
-    .keyctl button{background:#fff;color:var(--green);border:none;padding:8px 12px;border-radius:8px;font-weight:700;cursor:pointer}
-    .wrap{max-width:1200px;margin:20px auto;padding:0 16px}
-    .row{display:grid;grid-template-columns:1fr;gap:16px}
-    @media(min-width:1000px){.row{grid-template-columns:1fr 1fr}}
-    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
-    .card h2{margin:0 0 8px;font-size:16px}
-    .mut{color:var(--mut);font-size:13px;margin:0 0 10px}
-    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 12px}
-    .btn{background:var(--green);color:#fff;border:none;padding:9px 12px;border-radius:10px;font-weight:700;cursor:pointer}
-    .btn.alt{background:#fff;color:var(--green);border:1px solid var(--green)}
-    .btn.bad{background:var(--danger)}
-    input,select{padding:8px 10px;border-radius:8px;border:1px solid #d1d5db}
-    table{width:100%;border-collapse:collapse}
-    th,td{padding:8px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
-    th{font-size:12px;color:#374151;text-transform:uppercase;letter-spacing:.04em}
-    .pill{display:inline-block;background:var(--pill);border:1px solid #dcefe3;color:var(--green-dark);padding:4px 8px;border-radius:999px;font-size:12px}
-    .empty{color:#9ca3af;font-style:italic;padding:6px 0}
-    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .right{text-align:right}
+    body{margin:0;background:var(--bg);color:var(--ink);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .top{background:#2e7d32;color:#fff;padding:14px 16px;display:flex;align-items:center;gap:12px}
+    .brand{font-weight:800;letter-spacing:.3px}
+    .top .row{margin-left:auto;display:flex;gap:8px;align-items:center}
+    .key{width:280px;max-width:48vw;border:none;border-radius:10px;padding:10px 12px}
+    .btn{border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;background:#ffffff20;color:#fff}
+    .btn:hover{background:#ffffff33}
+    .btn.alt{background:#eef3ef;color:#234; border:1px solid var(--border)}
+    .btn.alt:hover{background:#e6efe8}
+    .btn.red{background:var(--red);color:#fff}
+    .btn.red:hover{background:var(--red-2)}
+    .wrap{max-width:1080px;margin:20px auto;padding:0 14px}
+    .controls{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+    select{appearance:none;border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:#fff}
+    .grid{display:grid;grid-template-columns:1.2fr .9fr;gap:16px}
+    @media(max-width:900px){.grid{grid-template-columns:1fr}}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px}
+    .h{font-weight:800;margin:0 0 4px}
+    .mut{color:var(--mut)}
+    .empty{color:var(--mut);padding:10px 0}
+    table{width:100%;border-collapse:separate;border-spacing:0}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+    th{font-size:12px;text-transform:uppercase;letter-spacing:.4px;color:#4a5a52;text-align:left}
+    td.right{text-align:right}
+    .pill{display:inline-block;background:var(--pill);color:var(--green-2);padding:4px 8px;border-radius:999px;border:1px solid #dcefe3;font-size:12px;font-weight:700}
+    .rowline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    input[type="date"], input[type="text"]{border:1px solid var(--border);border-radius:10px;padding:8px 10px}
+    .section-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    .hint{font-size:12px;color:var(--mut)}
   </style>
 </head>
 <body>
-  <div class="bar">
-    <h1>Chef Admin</h1>
-    <div class="sp"></div>
-    <div class="keyctl">
-      <input id="key" type="password" placeholder="Paste ADMIN_KEY…">
-      <button id="saveKey">Save</button>
-      <button id="clearKey" class="btn alt" style="background:#fff">Clear</button>
+  <div class="top">
+    <div class="brand">Chef Admin</div>
+    <div class="row">
+      <input id="adminkey" class="key" type="password" placeholder="Admin key…">
+      <button id="savekey" class="btn">Save</button>
+      <button id="clearkey" class="btn">Clear</button>
     </div>
   </div>
 
   <div class="wrap">
-    <div class="card">
-      <div class="controls">
-        <label>Month
-          <select id="month"></select>
-        </label>
-        <label>Year
-          <select id="year"></select>
-        </label>
-        <button id="refresh" class="btn">Refresh</button>
+    <div class="controls">
+      <label>Month
+        <select id="monthSel"></select>
+      </label>
+      <label>Year
+        <select id="yearSel"></select>
+      </label>
+      <button id="refreshBtn" class="btn alt" style="color:#fff;background:var(--btn)">Refresh</button>
+    </div>
+
+    <div class="grid">
+      <!-- Bookings -->
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <h3 class="h">Bookings</h3>
+            <div class="mut">Confirmed bookings for the selected month.</div>
+          </div>
+          <div class="rowline">
+            <button id="exportCsv" class="btn alt">Export CSV</button>
+          </div>
+        </div>
+        <div id="bookingsWrap" class="mut">Loading…</div>
       </div>
-      <div class="row">
-        <div class="card">
-          <h2>Bookings</h2>
-          <p class="mut">Confirmed bookings for the selected month.</p>
-          <div id="bookingsWrap"></div>
-        </div>
-        <div class="card">
-          <h2>Blackout Dates</h2>
-          <p class="mut">Manage dates you’re unavailable.</p>
 
-          <div class="grid2" style="margin-bottom:10px">
-            <input type="date" id="blkDate">
-            <input type="text" id="blkReason" placeholder="Reason (optional)">
+      <!-- Blackouts -->
+      <div class="card">
+        <div class="section-head">
+          <div>
+            <h3 class="h">Blackout Dates</h3>
+            <div class="mut">Manage dates you’re unavailable.</div>
           </div>
-          <div class="controls">
-            <button id="addBlk" class="btn">Add blackout</button>
-            <input id="bulkDates" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD…" style="flex:1">
-            <button id="addBulk" class="btn alt">Add bulk</button>
-          </div>
-
-          <div id="blackoutsWrap"></div>
         </div>
+
+        <div class="rowline" style="margin-bottom:8px">
+          <input type="date" id="boDate">
+          <input type="text" id="boReason" placeholder="Reason (optional)">
+          <button id="boAdd" class="btn alt">Add blackout</button>
+        </div>
+
+        <div class="rowline" style="margin-bottom:12px">
+          <input type="text" id="boBulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD,YY">
+          <button id="boBulkBtn" class="btn alt">Add bulk</button>
+        </div>
+
+        <div id="blackoutsWrap" class="mut">Loading…</div>
       </div>
     </div>
   </div>
 
-<script>
-(() => {
-  const BASE = "https://chef-booking-backend.onrender.com";
-  // read ?key= from URL once if present
-  const urlKey = new URLSearchParams(location.search).get("key");
-  if (urlKey) localStorage.setItem("ADMIN_KEY", urlKey);
+  <script>
+    // ===== CONFIG =====
+    const BASE = location.origin; // same origin as backend
+    const keyInput = document.getElementById('adminkey');
 
-  const keyInput = document.getElementById("key");
-  keyInput.value = localStorage.getItem("ADMIN_KEY") || "";
-
-  document.getElementById("saveKey").onclick = () => {
-    localStorage.setItem("ADMIN_KEY", keyInput.value.trim());
-    alert("Saved.");
-    loadAll();
-  };
-  document.getElementById("clearKey").onclick = () => {
-    localStorage.removeItem("ADMIN_KEY");
-    keyInput.value = "";
-    alert("Cleared.");
-  };
-
-  const monthSel = document.getElementById("month");
-  const yearSel  = document.getElementById("year");
-  const now = new Date();
-  for (let m=1;m<=12;m++){
-    const o=document.createElement("option");
-    o.value=m; o.textContent=new Date(2000,m-1,1).toLocaleString('en',{month:'long'});
-    if (m===now.getMonth()+1) o.selected=true;
-    monthSel.appendChild(o);
-  }
-  const thisYear = now.getFullYear();
-  for (let y=thisYear-1;y<=thisYear+2;y++){
-    const o=document.createElement("option"); o.value=y; o.textContent=y;
-    if (y===thisYear) o.selected=true;
-    yearSel.appendChild(o);
-  }
-  document.getElementById("refresh").onclick = loadAll;
-
-  function headers(){
-    const k = localStorage.getItem("ADMIN_KEY") || "";
-    if (!k) throw new Error("Admin key not set (paste it at top right).");
-    return { "x-admin-key": k, "Content-Type":"application/json" };
-  }
-
-  function fmtDate(iso){
-    if(!iso) return "";
-    const d = new Date(iso);
-    return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
-  }
-  function usd(cents){
-    const n = Number(cents||0)/100;
-    return n.toLocaleString("en-US",{style:"currency",currency:"USD"});
-  }
-
- <script>
-  // ... keep everything above as-is
-
-  async function loadBookings(){
-    const y = yearSel.value, m = monthSel.value;
-    const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
-    const el = document.getElementById("bookingsWrap");
-    if (!Array.isArray(data) || data.length===0){
-      el.innerHTML = `<div class="empty">No bookings this month.</div>`;
-      return;
+    function headers(){
+      const k = localStorage.getItem('ADMIN_KEY') || '';
+      return { 'Content-Type':'application/json', 'X-Admin-Key': k };
     }
-
-    function yesNoPill(v,label){
-      if (!v) return "";
-      return `<span class="pill" style="margin-right:6px">${label}</span>`;
+    async function fetchJson(url, opts={}){
+      const r = await fetch(url, { ...opts, headers: { ...(opts.headers||{}), ...headers() }});
+      try{ return await r.json(); }catch{ return null; }
     }
-    function safe(s){ return (s ?? "").toString().trim(); }
-    function fmtAddr(b){
-      const p = [
-        safe(b.address_line1 || b.address1),
-        [safe(b.city), safe(b.state), safe(b.zip)].filter(Boolean).join(", ")
-      ].filter(Boolean);
-      return p.join("<br>");
-    }
-    function usd(cents){
-      const n = Number(cents||0)/100;
-      return n.toLocaleString("en-US",{style:"currency",currency:"USD"});
-    }
-    function fmtDate(iso){
-      if(!iso) return "";
-      const d = new Date(iso);
-      return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
-    }
+    function usd(cents){ return (Number(cents||0)/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
+    function fmtDate(iso){ if(!iso) return ''; const d=new Date(iso); return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); }
+    function safe(s){ return (s ?? '').toString().trim(); }
 
-    const rows = data.map((b,i) => {
-      const day = fmtDate(b.start_at);
-      const name = safe(b.customer_name) || "—";
-      const email = safe(b.customer_email) || "—";
-      const pkg = safe(b.package_title) || "—";
-      const guests = b.guests ?? "—";
-      const dep = usd(b.deposit_cents);
-      const status = safe(b.status) || "—";
-      const addons = `${yesNoPill(b.bartender, "Bartender")}${yesNoPill(b.tablescape, "Tablescape")}`;
-      const addr = fmtAddr(b);
-      const phone = safe(b.phone);
-      const diet  = safe(b.diet_notes);
-      const sub   = usd(b.subtotal_cents);
-      const bal   = usd(b.balance_cents);
+    // ===== TOP BAR KEY =====
+    (function initAdminKey(){
+      const saved = localStorage.getItem('ADMIN_KEY') || '';
+      if(saved) keyInput.value = saved;
+      document.getElementById('savekey').onclick = ()=>{
+        localStorage.setItem('ADMIN_KEY', keyInput.value || '');
+        alert('Key saved'); loadAll();
+      };
+      document.getElementById('clearkey').onclick = ()=>{
+        localStorage.removeItem('ADMIN_KEY'); keyInput.value='';
+        alert('Key cleared'); loadAll();
+      };
+    })();
 
-      const rowId = `bkrow-${i}`;
+    // ===== MONTH / YEAR =====
+    const monthSel = document.getElementById('monthSel');
+    const yearSel  = document.getElementById('yearSel');
+    (function initMY(){
+      const months = [
+        "January","February","March","April","May","June",
+        "July","August","September","October","November","December"
+      ];
+      months.forEach((m,i)=>{ const o=document.createElement('option'); o.value=String(i+1).padStart(2,'0'); o.textContent=m; monthSel.appendChild(o); });
+      const y = new Date().getFullYear();
+      for(let yr=y-1; yr<=y+2; yr++){ const o=document.createElement('option'); o.value=yr; o.textContent=yr; yearSel.appendChild(o); }
+      const now=new Date(); monthSel.value=String(now.getMonth()+1).padStart(2,'0'); yearSel.value=String(now.getFullYear());
+    })();
+    document.getElementById('refreshBtn').onclick = () => loadAll();
 
-      return `
-        <tr>
-          <td>${day}</td>
-          <td>
-            <div>${name}</div>
-            <div class="mut" style="font-size:12px">${email}</div>
-          </td>
-          <td>${pkg}</td>
-          <td>${guests}</td>
-          <td>${addons || "—"}</td>
-          <td>${dep}</td>
-          <td><span class="pill">${status}</span></td>
-          <td class="right">
-            <button class="btn alt" data-toggle="${rowId}">View</button>
-            <button class="btn alt" data-del-booking="${b.id}" style="margin-left:6px">Delete</button>
-          </td>
-        </tr>
-        <tr id="${rowId}" style="display:none;background:#fafdfb">
-          <td colspan="8">
-            <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px">
-              <div>
-                <div class="mut" style="margin-bottom:6px">Address</div>
-                <div>${addr || "—"}</div>
-                <div class="mut" style="margin-top:10px">Phone</div>
-                <div>${phone || "—"}</div>
-                <div class="mut" style="margin-top:10px">Diet notes</div>
-                <div style="white-space:pre-wrap">${diet || "—"}</div>
+    // ===== BOOKINGS =====
+    async function loadBookings(){
+      const y = yearSel.value, m = monthSel.value;
+      const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
+      const el = document.getElementById("bookingsWrap");
+      if (!Array.isArray(data) || data.length===0){
+        el.innerHTML = `<div class="empty">No bookings this month.</div>`;
+        return;
+      }
+
+      function yesNoPill(v,label){ return v ? `<span class="pill" style="margin-right:6px">${label}</span>` : ""; }
+      function fmtAddr(b){
+        const p = [
+          safe(b.address_line1 || b.address1),
+          [safe(b.city), safe(b.state), safe(b.zip)].filter(Boolean).join(", ")
+        ].filter(Boolean);
+        return p.join("<br>");
+      }
+
+      const rows = data.map((b,i)=>{
+        const day   = fmtDate(b.start_at);
+        const name  = safe(b.customer_name) || "—";
+        const email = safe(b.customer_email) || "—";
+        const pkg   = safe(b.package_title) || "—";
+        const guests= b.guests ?? "—";
+        const dep   = usd(b.deposit_cents);
+        const status= safe(b.status) || "—";
+        const addons= `${yesNoPill(b.bartender,"Bartender")}${yesNoPill(b.tablescape,"Tablescape")}`;
+        const addr  = fmtAddr(b);
+        const phone = safe(b.phone);
+        const diet  = safe(b.diet_notes);
+        const sub   = usd(b.subtotal_cents);
+        const bal   = usd(b.balance_cents);
+        const rowId = `bkrow-${i}`;
+
+        return `
+          <tr>
+            <td>${day}</td>
+            <td>
+              <div>${name}</div>
+              <div class="mut" style="font-size:12px">${email}</div>
+            </td>
+            <td>${pkg}</td>
+            <td>${guests}</td>
+            <td>${addons || "—"}</td>
+            <td>${dep}</td>
+            <td><span class="pill">${status}</span></td>
+            <td class="right">
+              <button class="btn alt" data-toggle="${rowId}">View</button>
+              <button class="btn alt" data-del-booking="${b.id}" style="margin-left:6px">Delete</button>
+            </td>
+          </tr>
+          <tr id="${rowId}" style="display:none;background:#fafdfb">
+            <td colspan="8">
+              <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px">
+                <div>
+                  <div class="mut" style="margin-bottom:6px">Address</div>
+                  <div>${addr || "—"}</div>
+                  <div class="mut" style="margin-top:10px">Phone</div>
+                  <div>${phone || "—"}</div>
+                  <div class="mut" style="margin-top:10px">Diet notes</div>
+                  <div style="white-space:pre-wrap">${diet || "—"}</div>
+                </div>
+                <div>
+                  <div class="mut" style="margin-bottom:6px">Amounts</div>
+                  <div>Subtotal: <strong>${sub}</strong></div>
+                  <div>Deposit: <strong>${dep}</strong></div>
+                  <div>Balance: <strong>${bal}</strong></div>
+                </div>
               </div>
-              <div>
-                <div class="mut" style="margin-bottom:6px">Amounts</div>
-                <div>Subtotal: <strong>${sub}</strong></div>
-                <div>Deposit: <strong>${dep}</strong></div>
-                <div>Balance: <strong>${bal}</strong></div>
-              </div>
-            </div>
-          </td>
-        </tr>
+            </td>
+          </tr>
+        `;
+      }).join("");
+
+      el.innerHTML = `
+        <table>
+          <thead><tr>
+            <th>Date</th><th>Customer</th><th>Package</th>
+            <th>Guests</th><th>Add-ons</th><th>Deposit</th><th>Status</th><th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
       `;
-    }).join("");
 
-    el.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>Date</th>
-          <th>Customer</th>
-          <th>Package</th>
-          <th>Guests</th>
-          <th>Add-ons</th>
-          <th>Deposit</th>
-          <th>Status</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+      // Toggle details
+      el.querySelectorAll("[data-toggle]").forEach(btn=>{
+        btn.onclick = () => {
+          const id = btn.getAttribute("data-toggle");
+          const row = document.getElementById(id);
+          row.style.display = row.style.display === "none" ? "" : "none";
+          btn.textContent = row.style.display === "none" ? "View" : "Hide";
+        };
+      });
 
-    // Toggle details
-    el.querySelectorAll("[data-toggle]").forEach(btn=>{
-      btn.onclick = () => {
-        const id = btn.getAttribute("data-toggle");
-        const row = document.getElementById(id);
-        row.style.display = row.style.display === "none" ? "" : "none";
-        btn.textContent = row.style.display === "none" ? "View" : "Hide";
-      };
-    });
-
-    // Delete booking (use for test rows only)
-    el.querySelectorAll("[data-del-booking]").forEach(btn=>{
-      btn.onclick = async () => {
-        if (!confirm("Delete this booking? (Use for test rows only)")) return;
-        const id = btn.getAttribute("data-del-booking");
-        const r = await fetch(`${BASE}/api/admin/bookings/${id}`, {
-          method:"DELETE", headers: headers()
-        });
-        if (!r.ok) { alert("Delete failed"); return; }
-        loadBookings();
-      };
-    });
-  }
-
-  // ... keep everything below as-is
-</script>
-
-
-  // ----- LOADERS -----
-  async function loadBookings(){
-    const y = yearSel.value, m = monthSel.value;
-    const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
-    const el = document.getElementById("bookingsWrap");
-    if (!Array.isArray(data) || data.length===0){
-      el.innerHTML = `<div class="empty">No bookings this month.</div>`;
-      return;
+      // Delete booking (use for test rows only)
+      el.querySelectorAll("[data-del-booking]").forEach(btn=>{
+        btn.onclick = async () => {
+          if (!confirm("Delete this booking? (Use for test rows only)")) return;
+          const id = btn.getAttribute("data-del-booking");
+          const r = await fetch(`${BASE}/api/admin/bookings/${id}`,{
+            method:"DELETE", headers: headers()
+          });
+          if (!r.ok) { alert("Delete failed"); return; }
+          loadBookings();
+        };
+      });
     }
-    const rows = data.map(b => {
-      const day = fmtDate(b.start_at);
-      const dep = usd(b.deposit_cents);
-      const name = (b.customer_name||"").trim() || "—";
-      const email = (b.customer_email||"").trim() || "—";
-      const pkg = b.package_title || "—";
-      const guests = b.guests ?? "—";
-      const status = b.status || "—";
-      return `
-        <tr>
-          <td>${day}</td>
-          <td><div>${name}</div><div class="mut" style="font-size:12px">${email}</div></td>
-          <td>${pkg}</td>
-          <td>${guests}</td>
-          <td>${dep}</td>
-          <td><span class="pill">${status}</span></td>
-          <td class="right">
-            <button class="btn alt" data-del-booking="${b.id}">Delete</button>
-          </td>
-        </tr>
-      `;
-    }).join("");
-    el.innerHTML = `
-      <table>
-        <thead><tr>
-          <th>Date</th><th>Customer</th><th>Package</th>
-          <th>Guests</th><th>Deposit</th><th>Status</th><th></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
-    el.querySelectorAll("[data-del-booking]").forEach(btn=>{
-      btn.onclick = async () => {
-        if (!confirm("Delete this booking? (Use for test rows only)")) return;
-        const id = btn.getAttribute("data-del-booking");
-        const r = await fetch(`${BASE}/api/admin/bookings/${id}`, {
-          method:"DELETE", headers: headers()
-        });
-        if (!r.ok) { alert("Delete failed"); return; }
-        loadBookings();
-      };
-    });
-  }
 
-  async function loadBlackouts(){
-    const y = yearSel.value, m = monthSel.value;
-    const data = await fetchJson(`${BASE}/__admin/list-blackouts?year=${y}&month=${m}`);
-    const el = document.getElementById("blackoutsWrap");
-    if (!Array.isArray(data) || data.length===0){
-      el.innerHTML = `<div class="empty">No blackouts this month.</div>`;
-      return;
+    // CSV export (confirmed + pending shown)
+    document.getElementById('exportCsv').onclick = async () => {
+      const y=yearSel.value,m=monthSel.value;
+      const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
+      if (!Array.isArray(data) || data.length===0){ alert("No data"); return; }
+      const cols = [
+        'id','start_at','status','customer_name','customer_email',
+        'package_title','guests','phone','address_line1','city','state','zip',
+        'diet_notes','bartender','tablescape','subtotal_cents','deposit_cents','balance_cents'
+      ];
+      const esc = v => `"${String(v??'').replace(/"/g,'""')}"`;
+      const rows = [cols.join(',')]
+        .concat(data.map(r=>cols.map(c=>esc(r[c])).join(',')))
+        .join('\n');
+      const blob = new Blob([rows],{type:'text/csv'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `bookings-${y}-${m}.csv`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    };
+
+    // ===== BLACKOUTS =====
+    async function loadBlackouts(){
+      const y = yearSel.value, m = monthSel.value;
+      const data = await fetchJson(`${BASE}/__admin/list-blackouts?year=${y}&month=${m}`);
+      const el = document.getElementById("blackoutsWrap");
+      if (!Array.isArray(data) || data.length===0){
+        el.innerHTML = `<div class="empty">No blackouts this month.</div>`;
+        return;
+      }
+      const rows = data.map(b=>{
+        const day = fmtDate(b.start_at);
+        const reason = safe(b.reason) || "—";
+        return `
+          <tr>
+            <td>${day}</td>
+            <td>${reason}</td>
+            <td class="right"><button class="btn red" data-del="${b.id}">Delete</button></td>
+          </tr>
+        `;
+      }).join("");
+      el.innerHTML = `
+        <table>
+          <thead><tr><th>Date</th><th>Reason</th><th></th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+      el.querySelectorAll("[data-del]").forEach(btn=>{
+        btn.onclick = async () => {
+          if (!confirm("Delete this blackout date?")) return;
+          const id = btn.getAttribute("data-del");
+          const r = await fetch(`${BASE}/api/admin/blackouts/${id}`,{
+            method:"DELETE", headers: headers()
+          });
+          if (!r.ok){ alert("Delete failed"); return; }
+          loadBlackouts();
+        };
+      });
     }
-    const rows = data.map(b => {
-      const day = fmtDate(b.start_at);
-      const reason = (b.reason||"").trim() || "—";
-      return `
-        <tr>
-          <td>${day}</td>
-          <td>${reason}</td>
-          <td class="right"><button class="btn bad" data-del="${b.id}">Delete</button></td>
-        </tr>
-      `;
-    }).join("");
-    el.innerHTML = `
-      <table>
-        <thead><tr><th>Date</th><th>Reason</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
-    el.querySelectorAll("[data-del]").forEach(btn=>{
-      btn.onclick = async () => {
-        if (!confirm("Delete this blackout date?")) return;
-        const id = btn.getAttribute("data-del");
-        const r = await fetch(`${BASE}/api/admin/blackouts/${id}`, {
-          method:"DELETE", headers: headers()
-        });
-        if (!r.ok) { alert("Delete failed"); return; }
-        loadBlackouts();
-      };
-    });
-  }
 
-  // ----- ACTIONS -----
-  document.getElementById("addBlk").onclick = async () => {
-    try{
-      const date = document.getElementById("blkDate").value;
-      const reason = document.getElementById("blkReason").value.trim();
-      if (!date) { alert("Pick a date."); return; }
-      const r = await fetch(`${BASE}/api/admin/blackouts`, {
+    // Add blackout
+    document.getElementById('boAdd').onclick = async () => {
+      const d = document.getElementById('boDate').value;
+      const reason = document.getElementById('boReason').value.trim();
+      if(!d){ alert("Pick a date"); return; }
+      const r = await fetch(`${BASE}/api/admin/blackouts`,{
         method:"POST",
         headers: headers(),
-        body: JSON.stringify({ date, reason })
+        body: JSON.stringify({ date:d, reason })
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error||"Add failed");
-      document.getElementById("blkDate").value="";
-      document.getElementById("blkReason").value="";
+      if(!r.ok){ alert("Add failed"); return; }
+      document.getElementById('boDate').value = "";
+      document.getElementById('boReason').value = "";
       loadBlackouts();
-    }catch(e){ alert(e.message); }
-  };
+    };
 
-  document.getElementById("addBulk").onclick = async () => {
-    try{
-      const raw = document.getElementById("bulkDates").value.trim();
-      if (!raw){ alert("Enter comma-separated dates, e.g. 2025-10-22,2025-10-23"); return; }
-      const dates = raw.split(",").map(s=>s.trim()).filter(Boolean);
-      const reason = document.getElementById("blkReason").value.trim();
-      const r = await fetch(`${BASE}/api/admin/blackouts/bulk`, {
+    // Bulk add blackout
+    document.getElementById('boBulkBtn').onclick = async () => {
+      const raw = document.getElementById('boBulk').value.trim();
+      if(!raw){ alert("Enter dates like 2025-10-12,2025-10-13"); return; }
+      const dates = raw.split(',').map(s=>s.trim()).filter(Boolean);
+      if(dates.length===0){ alert("No dates parsed"); return; }
+      const reason = document.getElementById('boReason').value.trim();
+      const r = await fetch(`${BASE}/api/admin/blackouts/bulk`,{
         method:"POST",
         headers: headers(),
         body: JSON.stringify({ dates, reason })
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error||"Bulk add failed");
-      document.getElementById("bulkDates").value="";
+      if(!r.ok){ alert("Bulk add failed"); return; }
+      document.getElementById('boBulk').value="";
       loadBlackouts();
-    }catch(e){ alert(e.message); }
-  };
+    };
 
-  async function loadAll(){
-    try{
-      await Promise.all([loadBookings(), loadBlackouts()]);
-    }catch(e){
-      alert(e.message);
-    }
-  }
-
-  loadAll();
-})();
-</script>
+    async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
+    // initial
+    loadAll();
+  </script>
 </body>
 </html>
