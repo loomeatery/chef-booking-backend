@@ -778,6 +778,15 @@ app.get("/booking-success", async (req, res) => {
 </body></html>`);
 });
 
+import path from "path";
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Serve admin.html
+app.get("/admin", (req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
 // ----------------- Start server -----------------
 app.listen(port, () => {
   console.log(`Chef booking server listening on ${port}`);
