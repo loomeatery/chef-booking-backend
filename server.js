@@ -1,7 +1,6 @@
-// server.js — COMPLETE DROP-IN (ESM)
+// server.js — COMPLETE DROP-IN (ESM, careful changes only)
+// Flow: Create PENDING booking -> Stripe Checkout -> webhook CONFIRMS & emails
 // Service area: Manhattan, Brooklyn, Queens, Nassau, Suffolk
-// Emails: guest + admin via Resend (logo + confirmation code + Stripe receipt link)
-// Stripe webhook uses RAW body (keep route before express.json)
 
 import express from "express";
 import cors from "cors";
@@ -29,15 +28,17 @@ const pool = new Pool({
 });
 
 async function initSchema() {
+  // Base tables (keep names the same)
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bookings (
       id BIGSERIAL PRIMARY KEY,
       start_at TIMESTAMPTZ NOT NULL,
       end_at   TIMESTAMPTZ NOT NULL,
-      status   TEXT NOT NULL DEFAULT 'confirmed', -- pending|confirmed|canceled
+      status   TEXT NOT NULL DEFAULT 'pending', -- pending|confirmed|canceled
       customer_name  TEXT,
       customer_email TEXT,
       stripe_session_id TEXT UNIQUE,
+      created_via TEXT DEFAULT 'online',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -52,31 +53,48 @@ async function initSchema() {
     );
   `);
 
-  // SAFE DEDUPE before unique index
+  // Dedupe + index for blackouts (unchanged)
   await pool.query(`
     DELETE FROM blackout_dates a
     USING blackout_dates b
     WHERE a.start_at = b.start_at
       AND a.id < b.id;
   `);
-
   await pool.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS blackout_unique_start
       ON blackout_dates (start_at);
   `);
 
+  // --- NEW columns on bookings (idempotent) ---
+  const alters = [
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS package_id TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS package_title TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS guests INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS phone TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS address_line1 TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS city TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS state TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS zip TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS diet_notes TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS subtotal_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS bartender BOOLEAN DEFAULT false`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tablescape BOOLEAN DEFAULT false`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS bartender_fee_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tablescape_fee_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_reference_id TEXT`
+  ];
+  for (const sql of alters) { await pool.query(sql); }
+
   console.log("✅ Database schema ready");
 }
-initSchema().catch(e => {
-  console.error("DB init failed:", e);
-  process.exit(1);
-});
+initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); });
 
 // ----------------- Helpers -----------------
 function fmtUSD(cents){ try { return `$${(Number(cents)/100).toFixed(2)}`; } catch { return "$0.00"; } }
 
 function inAllowedZip(zip) {
-  // Manhattan 10000–10299; Queens partial 111xx, 113–114xx, 116xx; Brooklyn 112xx; Nassau 110–115xx; Suffolk 117–119xx
   if (!/^\d{5}$/.test(String(zip))) return false;
   const z = Number(zip);
   const manhattan = (z >= 10000 && z <= 10299);
@@ -90,7 +108,6 @@ function inAllowedZip(zip) {
 }
 
 function shortCodeFromSessionId(sessionId = '') {
-  // Last 8 safe uppercase chars as a friendly confirmation code
   return (sessionId || '').replace(/[^a-zA-Z0-9]/g,'').slice(-8).toUpperCase();
 }
 
@@ -126,19 +143,13 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
-// =============== IMPORTANT ===============
-// Stripe requires the *raw* body on the webhook route.
-// Define the webhook route BEFORE the JSON body parser.
-// =========================================
-
-// ----------------- Stripe Webhook (auto-book + emails) -----------------
+// -------------- STRIPE WEBHOOK (raw body) --------------
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!STRIPE_WEBHOOK_SECRET) {
       console.warn("⚠️ STRIPE_WEBHOOK_SECRET not set; ignoring webhook.");
       return res.status(200).send("ok");
     }
-
     const sig = req.headers["stripe-signature"];
     let event;
     try {
@@ -151,12 +162,43 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const md = session.metadata || {};
-
+      const bookingId = md.booking_id ? Number(md.booking_id) : null;
       const eventDate = md.event_date; // "YYYY-MM-DD"
-      if (eventDate) {
+
+      // Try to fetch receipt URL + deposit amount
+      let receiptUrl = "";
+      let depositText = "Deposit received";
+      try {
+        if (session.payment_intent) {
+          const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
+          const ch = pi.charges?.data?.[0];
+          if (ch?.receipt_url) receiptUrl = ch.receipt_url;
+          if (pi.amount_received) depositText = fmtUSD(pi.amount_received);
+        }
+      } catch (e) {
+        console.warn("Could not fetch receipt URL", e.message);
+      }
+
+      if (bookingId) {
+        await pool.query(
+          `UPDATE bookings
+             SET status='confirmed',
+                 stripe_session_id=$2,
+                 customer_name=$3,
+                 customer_email=$4
+           WHERE id=$1`,
+          [
+            bookingId,
+            session.id,
+            `${md.first_name || ""} ${md.last_name || ""}`.trim(),
+            session.customer_details?.email || md.email || ""
+          ]
+        );
+        console.log(`✅ Confirmed booking #${bookingId} from Stripe session ${session.id}`);
+      } else if (eventDate) {
+        // Fallback: create if pending booking was not created (shouldn't happen)
         const start = new Date(`${eventDate}T00:00:00.000Z`);
         const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
-
         await pool.query(
           `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email, stripe_session_id)
            VALUES ($1, $2, 'confirmed', $3, $4, $5)
@@ -170,68 +212,52 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
             session.id
           ]
         );
-
         console.log(`✅ Auto-booked ${eventDate} from Stripe session ${session.id}`);
+      }
 
-        // Try to fetch receipt URL + deposit amount
-        let receiptUrl = "";
-        let depositText = "Deposit received";
-        try {
-          if (session.payment_intent) {
-            const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
-            const ch = pi.charges?.data?.[0];
-            if (ch?.receipt_url) receiptUrl = ch.receipt_url;
-            if (pi.amount_received) depositText = fmtUSD(pi.amount_received);
-          }
-        } catch (e) {
-          console.warn("Could not fetch receipt URL", e.message);
-        }
+      // ------ Send confirmation email (guest + admin copy) ------
+      const guestEmail = session.customer_details?.email || md.email || "";
+      const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
+      const pkgTitle   = md.package_title || md.package || "Private Event";
+      const guests     = md.guests || "";
+      const startTime  = md.start_time || "18:00";
+      const successPage = `${process.env.SITE_URL}/booking-success`; // static page link
+      const confCode   = shortCodeFromSessionId(session.id);
+      const logoUrl    = process.env.EMAIL_LOGO_URL || "";
 
-        // ------ Send confirmation email (guest + admin copy) ------
-        const guestEmail = session.customer_details?.email || md.email || "";
-        const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
-        const pkgTitle   = md.package_title || md.package || "Private Event";
-        const guests     = md.guests || "";
-        const startTime  = md.start_time || "18:00";
-        const successPage = `${process.env.SITE_URL}/booking-success`; // simple success page link
-        const confCode   = shortCodeFromSessionId(session.id);
-        const logoUrl    = process.env.EMAIL_LOGO_URL || "";
+      const logoBlock = logoUrl
+        ? `<img src="${logoUrl}" alt="Chef Chris" width="48" height="48" style="border-radius:50%;display:block;margin-bottom:8px"/>`
+        : "";
 
-        const logoBlock = logoUrl
-          ? `<img src="${logoUrl}" alt="Chef Chris" width="48" height="48" style="border-radius:50%;display:block;margin-bottom:8px"/>`
-          : "";
+      const html = `
+        <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
+          ${logoBlock}
+          <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
+          <p>Hi ${fullName},</p>
+          <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date || ""}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
+          <p>We’ve received your deposit: <strong>${depositText}</strong>.</p>
 
-const html = `
-  <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
-    ${logoBlock}
-    <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
-    <p>Hi ${fullName},</p>
-    <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
-    <p>We’ve received your deposit: <strong>${depositText}</strong>.</p>
+          <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
+            <div style="font-size:13px;color:#555">Confirmation code</div>
+            <div style="font-weight:800;font-size:20px;letter-spacing:1px">${confCode}</div>
+          </div>
 
-    <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
-      <div style="font-size:13px;color:#555">Confirmation code</div>
-      <div style="font-weight:800;font-size:20px;letter-spacing:1px">${confCode}</div>
-    </div>
+          ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
 
-    ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
+          <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
+          <p>I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>.</p>
 
-    <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
-    <p>I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>.</p>
+          <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+          <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
+        </div>
+      `;
 
-    <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
-    <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
-  </div>
-`;
-
-        if (guestEmail) {
-          await sendEmail({
-            to: [guestEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
-            subject: `Booking confirmed — ${eventDate} • ${pkgTitle}`,
-            html
-          });
-        }
-        // -----------------------------------------------------------
+      if (guestEmail) {
+        await sendEmail({
+          to: [guestEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
+          subject: `Booking confirmed — ${md.event_date || ""} • ${pkgTitle}`,
+          html
+        });
       }
     }
 
@@ -246,14 +272,11 @@ const html = `
 app.use(cors());
 app.use(express.json());
 
-// ----------------- In-memory fallback -----------------
-let bookedDates = [];
-
 // ----------------- Health -----------------
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
-// ----------------- Availability (reads DB + fallback) -----------------
+// ----------------- Availability (reads DB) -----------------
 app.get("/api/availability", async (req, res) => {
   try {
     const year  = Number(req.query.year);
@@ -293,17 +316,11 @@ app.get("/api/availability", async (req, res) => {
       return Array.from(set);
     };
 
-    const fromDb = [
+    const booked = Array.from(new Set([
       ...expandDates(qBookings.rows),
       ...expandDates(qBlackouts.rows)
-    ];
+    ])).sort();
 
-    const fromMem = (bookedDates || []).filter((d) => {
-      const dt = new Date(d);
-      return dt.getUTCFullYear() === year && (dt.getUTCMonth() + 1) === month;
-    });
-
-    const booked = Array.from(new Set([...fromDb, ...fromMem])).sort();
     res.json({ booked });
   } catch (err) {
     console.error("Availability error:", err);
@@ -324,11 +341,7 @@ async function verifyRecaptcha(token, ip) {
     const resp = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        secret,
-        response: token,
-        remoteip: ip || ""
-      })
+      body: new URLSearchParams({ secret, response: token, remoteip: ip || "" })
     });
     const data = await resp.json();
     return data.success === true;
@@ -338,23 +351,20 @@ async function verifyRecaptcha(token, ip) {
   }
 }
 
-// ----------------- Quote -----------------
+// ----------------- Quote (kept, if you use it elsewhere) -----------------
 app.post("/api/quote", (req, res) => {
   try {
-    const { pkg } = req.body || {};
     const guests = Number(req.body?.guests || 0);
-
     const PKG = {
-      tasting:  { perPerson: 200, depositPct: 0.30 },
+      tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
     };
-    const sel = PKG[pkg] || PKG.tasting;
+    const sel = PKG[req.body?.pkg] || PKG.tasting;
 
     const g        = Math.max(1, guests);
     const subtotal = sel.perPerson * g;
     const deposit  = Math.round(subtotal * sel.depositPct);
-
     res.json({ subtotal, tax: 0, total: subtotal, deposit });
   } catch (err) {
     console.error("Quote error:", err);
@@ -362,7 +372,7 @@ app.post("/api/quote", (req, res) => {
   }
 });
 
-// ----------------- Book (Stripe Checkout) -----------------
+// ----------------- Book (Stripe Checkout, now saves PENDING) -----------------
 app.post("/api/book", async (req, res) => {
   try {
     if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
@@ -387,7 +397,6 @@ app.post("/api/book", async (req, res) => {
     }[packageId] || "Private Event");
 
     const guests = Number(b.guests || 0);
-
     if (!date || !time) return res.status(400).json({ error: "Missing date or time." });
     if (!email) return res.status(400).json({ error: "Email is required." });
     if (!Number.isFinite(guests) || guests < 1) return res.status(400).json({ error: "Guest count is invalid." });
@@ -401,30 +410,69 @@ app.post("/api/book", async (req, res) => {
       });
     }
 
-    // 3) Pricing
+    // 3) Pricing (UPDATED per-person + upsells)
     const PKG = {
-      tasting:  { perPerson: 200, depositPct: 0.30 },
+      tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
     };
-    const perPerson  = Number(b.perPerson ?? PKG[packageId]?.perPerson ?? 200);
+    const perPerson  = Number(b.perPerson ?? PKG[packageId]?.perPerson ?? 215);
     const depositPct = Number(b.depositPct ?? PKG[packageId]?.depositPct ?? 0.30);
 
-    const subtotal         = perPerson * guests;
-    const depositDollars   = Math.round(subtotal * depositPct);
-    const depositCents     = depositDollars * 100;
+    // Upsells from form (booleans)
+    const bartender  = String(b.bartender || "").toLowerCase() === "yes" || b.bartender === true;
+    const tablescape = String(b.tablescape || "").toLowerCase() === "yes" || b.tablescape === true;
+
+    const bartenderFeeCents  = bartender  ? 300 * 100 : 0;      // flat $300
+    const tablescapeFeeCents = tablescape ? (15 * guests) * 100 : 0; // $15 per guest
+
+    const baseSubtotalCents  = Math.round(perPerson * guests * 100);
+    const subtotalCents      = baseSubtotalCents + bartenderFeeCents + tablescapeFeeCents;
+    const depositCents       = Math.round(subtotalCents * depositPct);
+    const balanceCents       = subtotalCents - depositCents;
     if (!Number.isFinite(depositCents) || depositCents < 50) {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
 
-    // 4) Create Stripe Checkout Session
+    // 3.5) Create PENDING booking row (so we own the ID)
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+
+    const pending = await pool.query(
+      `INSERT INTO bookings
+         (start_at, end_at, status, customer_name, customer_email,
+          package_id, package_title, guests, phone,
+          address_line1, city, state, zip, diet_notes,
+          subtotal_cents, deposit_cents, balance_cents,
+          bartender, tablescape, bartender_fee_cents, tablescape_fee_cents,
+          created_via)
+       VALUES
+         ($1,$2,'pending',$3,$4,
+          $5,$6,$7,$8,
+          $9,$10,$11,$12,$13,
+          $14,$15,$16,
+          $17,$18,$19,$20,
+          'online')
+       RETURNING id`,
+      [
+        start.toISOString(), end.toISOString(),
+        `${b.firstName||''} ${b.lastName||''}`.trim(), email,
+        packageId, packageName, guests, b.phone || '',
+        b.address1 || b.address_line1 || b.address || '', b.city || '', b.state || '', b.zip || '',
+        b.diet || '',
+        subtotalCents, depositCents, balanceCents,
+        bartender, tablescape, bartenderFeeCents || null, tablescapeFeeCents || null
+      ]
+    );
+    const bookingId = pending.rows[0].id;
+
+    // 4) Create Stripe Checkout Session (deposit only)
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: email,
       billing_address_collection: "required",
       phone_number_collection: { enabled: true },
       automatic_tax: { enabled: false },
-
       allow_promotion_codes: true,
 
       line_items: [{
@@ -434,15 +482,19 @@ app.post("/api/book", async (req, res) => {
           unit_amount: depositCents,
           product_data: {
             name: `Deposit — ${packageName} (${guests} guests, ${date} ${time})`,
-            description: `${date} ${time} • ${packageName} • ${guests} guests`
+            description: `${date} ${time} • ${packageName} • ${guests} guests` +
+              (bartender ? " • Bartender" : "") +
+              (tablescape ? " • Tablescape & Styling" : "")
           }
         }
       }],
 
-      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${process.env.SITE_URL}/booking-success?booking_id=${bookingId}&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
 
+      client_reference_id: String(bookingId),
       metadata: {
+        booking_id: String(bookingId),
         event_date: date,
         start_time: time,
         package: packageId,
@@ -458,6 +510,14 @@ app.post("/api/book", async (req, res) => {
         zip:           b.zip || "",
         country:       "US",
         diet_notes:            b.diet || "",
+        bartender:             bartender ? "yes" : "no",
+        tablescape:            tablescape ? "yes" : "no",
+        bartender_fee_cents:   String(bartenderFeeCents || 0),
+        tablescape_fee_cents:  String(tablescapeFeeCents || 0),
+        base_subtotal_cents:   String(baseSubtotalCents),
+        subtotal_cents:        String(subtotalCents),
+        deposit_cents:         String(depositCents),
+        balance_cents:         String(balanceCents),
         ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
         agreed_to_terms:       b.agreedToTerms ? "yes" : "no"
       },
@@ -471,7 +531,6 @@ app.post("/api/book", async (req, res) => {
       }
     });
 
-    if (date) bookedDates.push(date);
     return res.json({ url: session.url, checkoutUrl: session.url });
   } catch (err) {
     const msg = err?.raw?.message || err?.message || "Unable to create booking.";
@@ -487,9 +546,7 @@ function requireAdmin(req, res, next) {
   return res.status(401).json({ error: "Unauthorized" });
 }
 
-// ----------------- Admin APIs -----------------
-
-// Bulk add blackout dates — { dates: ["YYYY-MM-DD", ...], reason?: "text" }
+// ----------------- Admin APIs (unchanged except fields exist) -----------------
 app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
   try {
     const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
@@ -610,7 +667,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// Month-filtered list for BLACKOUTS (for /admin)
+// ----------------- Admin pages (extended columns) -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -630,7 +687,6 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   }
 });
 
-// Month-filtered list for BOOKINGS (admin page)
 app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -638,7 +694,10 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
     const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
     const r = await pool.query(
-      `SELECT id,start_at,end_at,status,customer_name,customer_email
+      `SELECT id,start_at,end_at,status,customer_name,customer_email,
+              package_title, guests,
+              bartender, tablescape,
+              subtotal_cents, deposit_cents, balance_cents
          FROM bookings
         WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
         ORDER BY start_at ASC`,
@@ -650,7 +709,6 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Simple Admin Page (/admin) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
@@ -665,7 +723,7 @@ app.get("/admin", (_req, res) => {
   :root{--ink:#222;--mut:#666;--bg:#fafafa;--card:#fff;--b:#eee;--btn:#7B8B74;--btn2:#444;}
   html,body{height:100%}
   body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px;overflow:auto}
-  .wrap{max-width:900px;margin:0 auto}
+  .wrap{max-width:1000px;margin:0 auto}
   h1{margin:0 0 8px}
   .card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:16px;margin:12px 0}
   .row{display:grid;grid-template-columns:1fr;gap:12px}
@@ -682,6 +740,7 @@ app.get("/admin", (_req, res) => {
   .tag.ok{border-color:#cfead2;background:#eef9ef}
   .tag.warn{border-color:#f3e3cc;background:#fff6ea}
   .table-wrap{overflow:auto}
+  .num{font-variant-numeric: tabular-nums;}
 </style>
 </head>
 <body>
@@ -762,12 +821,18 @@ app.get("/admin", (_req, res) => {
     <h3 style="margin:16px 0 8px">Bookings</h3>
     <div class="table-wrap">
       <table id="tblBookings"><thead>
-        <tr><th>ID</th><th>Date(s)</th><th>Status</th><th>Customer</th><th></th></tr>
+        <tr>
+          <th>ID</th><th>Date(s)</th><th>Status</th>
+          <th>Package</th><th>Guests</th>
+          <th>Bartender</th><th>Tablescape&nbsp;&amp;&nbsp;Styling</th>
+          <th class="num">Subtotal</th><th class="num">Deposit</th><th class="num">Balance</th>
+          <th>Customer</th><th></th>
+        </tr>
       </thead><tbody></tbody></table>
     </div>
   </div>
 
-  <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. The date should show as <span class="tag warn">Booked</span>.</p>
+  <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. Confirm the date shows as <span class="tag warn">Booked</span>.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
@@ -775,8 +840,8 @@ app.get("/admin", (_req, res) => {
 const API = location.origin;
 const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localStorage.getItem("ADMIN_KEY") || "" });
 
-function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem('ADMIN_KEY', v); alert('Saved'); }
-function clearKey(){ localStorage.removeItem('ADMIN_KEY'); alert('Cleared'); }
+function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem("ADMIN_KEY", v); alert('Saved'); }
+function clearKey(){ localStorage.removeItem("ADMIN_KEY"); alert('Cleared'); }
 
 const fpMulti = flatpickr("#dates", { mode: "multiple", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", disableMobile: false });
 const fpOne   = flatpickr("#dateOne", { mode: "single", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", defaultDate: new Date() });
@@ -809,6 +874,7 @@ function fmtRange(s,e){
   const two = \`\${eday.getUTCFullYear()}-\${pad(eday.getUTCMonth()+1)}-\${pad(eday.getUTCDate())}\`;
   return one===two ? one : \`\${one} → \${two}\`;
 }
+function money(c){ if(c==null) return ""; return (c/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
 
 function getMonthParts(){
   const m = document.getElementById('month').value;
@@ -816,7 +882,6 @@ function getMonthParts(){
   const [yy,mm] = m.split('-');
   return { yy, mm };
 }
-
 function shiftMonth(delta){
   const parts = getMonthParts(); if(!parts){ return; }
   const d = new Date(Number(parts.yy), Number(parts.mm)-1, 1);
@@ -850,13 +915,24 @@ async function loadMonth(){
 
   const tb2 = document.querySelector('#tblBookings tbody'); tb2.innerHTML='';
   if(bookings.length===0){
-    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="5" class="mut">No bookings this month.</td>'; tb2.appendChild(tr);
+    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="12" class="mut">No bookings this month.</td>'; tb2.appendChild(tr);
   } else {
     bookings.forEach(b=>{
       const tag = b.status==='confirmed' ? '<span class="tag ok">confirmed</span>' : '<span class="tag">'+b.status+'</span>';
       const who = (b.customer_name||'') + (b.customer_email? ' • '+b.customer_email : '');
       const tr=document.createElement('tr');
-      tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${tag}</td><td>\${who}</td>
+      tr.innerHTML = \`
+        <td>\${b.id}</td>
+        <td>\${fmtRange(b.start_at,b.end_at)}</td>
+        <td>\${tag}</td>
+        <td>\${b.package_title || ''}</td>
+        <td>\${b.guests ?? ''}</td>
+        <td>\${b.bartender ? 'Yes' : 'No'}</td>
+        <td>\${b.tablescape ? 'Yes' : 'No'}</td>
+        <td class="num">\${money(b.subtotal_cents)}</td>
+        <td class="num">\${money(b.deposit_cents)}</td>
+        <td class="num">\${money(b.balance_cents)}</td>
+        <td>\${who}</td>
         <td><button class="btn gray" onclick="delBooking(\${b.id})">Delete</button></td>\`;
       tb2.appendChild(tr);
     });
@@ -886,39 +962,7 @@ async function delBooking(id){
 </html>`);
 });
 
-// ----------------- Dev helpers (optional) -----------------
-app.get("/api/dev/seed-blackout", async (_req, res) => {
-  try {
-    const now = new Date();
-    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0));
-    const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
-    const r = await pool.query(
-      `INSERT INTO blackout_dates (start_at, end_at, reason)
-       VALUES ($1,$2,'Test blackout') RETURNING *`,
-      [start.toISOString(), end.toISOString()]
-    );
-    res.json(r.rows[0]);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get("/api/dev/blackouts", async (_req, res) => {
-  try {
-    const r = await pool.query(
-      `SELECT id, start_at, end_at, reason, created_at
-         FROM blackout_dates
-        ORDER BY id DESC LIMIT 5`
-    );
-    res.json(r.rows);
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ----------------- Success page (confetti) -----------------
+// ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
   const session_id = req.query.session_id || "";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -949,7 +993,7 @@ app.get("/booking-success", async (req, res) => {
       <div class="pill">We handle all the details</div>
     </div>
     <a class="cta" href="/contact">Need anything? Get in touch</a>
-    <p style="margin-top:12px;font-size:13px">Booking ID: ${session_id}</p>
+    <p style="margin-top:12px;font-size:13px">Booking ID (Stripe session): ${session_id}</p>
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
