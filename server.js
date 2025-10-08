@@ -1,3 +1,4 @@
+
 // server.js — COMPLETE DROP-IN (ESM, careful changes only)
 // Flow: Create PENDING booking -> Stripe Checkout -> webhook CONFIRMS & emails
 // Service area: Manhattan, Brooklyn, Queens, Nassau, Suffolk
@@ -65,8 +66,9 @@ async function initSchema() {
       ON blackout_dates (start_at);
   `);
 
-  // --- NEW columns on bookings (idempotent) ---
+  // --- Ensure new columns exist on existing 'bookings' tables (idempotent) ---
   const alters = [
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_via TEXT DEFAULT 'online'`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS package_id TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS package_title TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS guests INTEGER`,
@@ -667,7 +669,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin pages (extended columns) -----------------
+// ----------------- Admin list pages -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -709,259 +711,6 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-app.get("/admin", (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Calendar Admin</title>
-
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
-<style>
-  :root{--ink:#222;--mut:#666;--bg:#fafafa;--card:#fff;--b:#eee;--btn:#7B8B74;--btn2:#444;}
-  html,body{height:100%}
-  body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:var(--bg);color:#000;margin:0;padding:24px;overflow:auto}
-  .wrap{max-width:1000px;margin:0 auto}
-  h1{margin:0 0 8px}
-  .card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:16px;margin:12px 0}
-  .row{display:grid;grid-template-columns:1fr;gap:12px}
-  @media(min-width:720px){.row.two{grid-template-columns:1fr 1fr}}
-  label{font-size:13px;color:var(--mut);margin-bottom:4px;display:block}
-  input,select,button{font-size:14px}
-  input,select{width:100%;padding:10px;border:1px solid #ddd;border-radius:10px;background:#fff;box-sizing:border-box}
-  .btn{display:inline-block;background:var(--btn);color:#fff;border:none;border-radius:999px;padding:10px 18px;font-weight:700;cursor:pointer}
-  .btn.gray{background:var(--btn2)}
-  table{width:100%;border-collapse:collapse}
-  th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
-  .mut{color:var(--mut);font-size:12px}
-  .tag{display:inline-block;padding:2px 8px;border-radius:999px;border:1px solid #ddd;font-size:12px}
-  .tag.ok{border-color:#cfead2;background:#eef9ef}
-  .tag.warn{border-color:#f3e3cc;background:#fff6ea}
-  .table-wrap{overflow:auto}
-  .num{font-variant-numeric: tabular-nums;}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <h1>Calendar Admin</h1>
-  <div class="mut">Enter your admin key once, then manage blackouts and manual bookings.</div>
-
-  <div class="card">
-    <div class="row two">
-      <div>
-        <label>Admin Key</label>
-        <input id="k" type="password" placeholder="Enter ADMIN_KEY (saved locally)" />
-      </div>
-      <div>
-        <label>&nbsp;</label>
-        <button class="btn" onclick="saveKey()">Save Key</button>
-        <button class="btn gray" onclick="clearKey()">Clear</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row two">
-      <div>
-        <label>Date(s) to Blackout</label>
-        <input id="dates" placeholder="Click dates to select multiple" />
-        <div class="mut" style="margin-top:6px">Tip: click multiple days to select; click again to unselect.</div>
-      </div>
-      <div>
-        <label>Reason / Name (optional)</label>
-        <input id="note" placeholder="Travel, Private, Client name..." />
-      </div>
-    </div>
-    <div style="margin-top:12px">
-      <button class="btn" onclick="addBulk()">+ Add Blackout(s)</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row two">
-      <div>
-        <label>Manual Booking — Date</label>
-        <input id="dateOne" placeholder="Pick one date" />
-      </div>
-      <div>
-        <label>Customer / Note</label>
-        <input id="noteOne" placeholder="Name, email (optional)" />
-      </div>
-    </div>
-    <div style="margin-top:12px">
-      <button class="btn gray" onclick="addBooking()">+ Add Manual Booking</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="row two">
-      <div>
-        <label>Month</label>
-        <input id="month" type="month" />
-      </div>
-      <div>
-        <label>&nbsp;</label>
-        <div style="display:flex; gap:8px; flex-wrap:wrap">
-          <button class="btn" onclick="loadMonth()">Load Month</button>
-          <button class="btn gray" onclick="shiftMonth(-1)">◀︎ Prev</button>
-          <button class="btn gray" onclick="shiftMonth(1)">Next ▶︎</button>
-        </div>
-      </div>
-    </div>
-
-    <h3 style="margin:16px 0 8px">Blackouts</h3>
-    <div class="table-wrap">
-      <table id="tblBlackouts"><thead>
-        <tr><th>ID</th><th>Date(s)</th><th>Reason</th><th></th></tr>
-      </thead><tbody></tbody></table>
-    </div>
-
-    <h3 style="margin:16px 0 8px">Bookings</h3>
-    <div class="table-wrap">
-      <table id="tblBookings"><thead>
-        <tr>
-          <th>ID</th><th>Date(s)</th><th>Status</th>
-          <th>Package</th><th>Guests</th>
-          <th>Bartender</th><th>Tablescape&nbsp;&amp;&nbsp;Styling</th>
-          <th class="num">Subtotal</th><th class="num">Deposit</th><th class="num">Balance</th>
-          <th>Customer</th><th></th>
-        </tr>
-      </thead><tbody></tbody></table>
-    </div>
-  </div>
-
-  <p class="mut">Tip: after adding a blackout or booking, reload your public calendar. Confirm the date shows as <span class="tag warn">Booked</span>.</p>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
-<script>
-const API = location.origin;
-const hdrs = () => ({ "Content-Type": "application/json", "x-admin-key": localStorage.getItem("ADMIN_KEY") || "" });
-
-function saveKey(){ const v = document.getElementById('k').value.trim(); localStorage.setItem("ADMIN_KEY", v); alert('Saved'); }
-function clearKey(){ localStorage.removeItem("ADMIN_KEY"); alert('Cleared'); }
-
-const fpMulti = flatpickr("#dates", { mode: "multiple", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", disableMobile: false });
-const fpOne   = flatpickr("#dateOne", { mode: "single", dateFormat: "Y-m-d", altInput: true, altFormat: "M j, Y", defaultDate: new Date() });
-
-async function addBulk(){
-  const reason = document.getElementById('note').value || '';
-  const dates = fpMulti.selectedDates.map(d => fpMulti.formatDate(d, "Y-m-d"));
-  if (!dates.length) return alert("Pick at least one date.");
-  const res = await fetch(\`\${API}/api/admin/blackouts/bulk\`, { method:"POST", headers:hdrs(), body:JSON.stringify({ dates, reason }) });
-  if (!res.ok) return alert("Error adding blackouts");
-  alert(\`\${dates.length} blackout date(s) added.\`);
-  fpMulti.clear(); loadMonth();
-}
-
-async function addBooking(){
-  const sel = fpOne.selectedDates[0];
-  if (!sel) return alert("Pick a date.");
-  const date = fpOne.formatDate(sel, "Y-m-d");
-  const note = document.getElementById('noteOne').value || '';
-  const r = await fetch(\`\${API}/api/admin/bookings\`, { method:'POST', headers:hdrs(), body:JSON.stringify({ date, name: note, email: '' }) });
-  if(!r.ok){ return alert('Error adding booking'); }
-  alert('Booking added'); loadMonth();
-}
-
-function fmtRange(s,e){
-  const sd = new Date(s), ed = new Date(e);
-  const pad = n => String(n).padStart(2,'0');
-  const one = \`\${sd.getUTCFullYear()}-\${pad(sd.getUTCMonth()+1)}-\${pad(sd.getUTCDate())}\`;
-  const eday = new Date(ed); eday.setUTCDate(eday.getUTCDate()-1);
-  const two = \`\${eday.getUTCFullYear()}-\${pad(eday.getUTCMonth()+1)}-\${pad(eday.getUTCDate())}\`;
-  return one===two ? one : \`\${one} → \${two}\`;
-}
-function money(c){ if(c==null) return ""; return (c/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
-
-function getMonthParts(){
-  const m = document.getElementById('month').value;
-  if(!m){ return null; }
-  const [yy,mm] = m.split('-');
-  return { yy, mm };
-}
-function shiftMonth(delta){
-  const parts = getMonthParts(); if(!parts){ return; }
-  const d = new Date(Number(parts.yy), Number(parts.mm)-1, 1);
-  d.setMonth(d.getMonth() + delta);
-  document.getElementById('month').value = d.toISOString().slice(0,7);
-  loadMonth();
-}
-
-async function loadMonth(){
-  const parts = getMonthParts();
-  if(!parts){ return alert('Pick a month'); }
-  const yy = parts.yy, mm = parts.mm;
-
-  const q1 = await fetch(\`\${API}/__admin/list-blackouts?year=\${yy}&month=\${Number(mm)}\`, {headers:hdrs()});
-  const blackouts = q1.ok ? await q1.json() : [];
-
-  const q2 = await fetch(\`\${API}/__admin/list-bookings?year=\${yy}&month=\${Number(mm)}\`, {headers:hdrs()});
-  const bookings = q2.ok ? await q2.json() : [];
-
-  const tb1 = document.querySelector('#tblBlackouts tbody'); tb1.innerHTML='';
-  if(blackouts.length===0){
-    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="4" class="mut">No blackouts this month.</td>'; tb1.appendChild(tr);
-  } else {
-    blackouts.forEach(b=>{
-      const tr=document.createElement('tr');
-      tr.innerHTML = \`<td>\${b.id}</td><td>\${fmtRange(b.start_at,b.end_at)}</td><td>\${b.reason||''}</td>
-        <td><button class="btn gray" onclick="delBlackout(\${b.id})">Delete</button></td>\`;
-      tb1.appendChild(tr);
-    });
-  }
-
-  const tb2 = document.querySelector('#tblBookings tbody'); tb2.innerHTML='';
-  if(bookings.length===0){
-    const tr=document.createElement('tr'); tr.innerHTML = '<td colspan="12" class="mut">No bookings this month.</td>'; tb2.appendChild(tr);
-  } else {
-    bookings.forEach(b=>{
-      const tag = b.status==='confirmed' ? '<span class="tag ok">confirmed</span>' : '<span class="tag">'+b.status+'</span>';
-      const who = (b.customer_name||'') + (b.customer_email? ' • '+b.customer_email : '');
-      const tr=document.createElement('tr');
-      tr.innerHTML = \`
-        <td>\${b.id}</td>
-        <td>\${fmtRange(b.start_at,b.end_at)}</td>
-        <td>\${tag}</td>
-        <td>\${b.package_title || ''}</td>
-        <td>\${b.guests ?? ''}</td>
-        <td>\${b.bartender ? 'Yes' : 'No'}</td>
-        <td>\${b.tablescape ? 'Yes' : 'No'}</td>
-        <td class="num">\${money(b.subtotal_cents)}</td>
-        <td class="num">\${money(b.deposit_cents)}</td>
-        <td class="num">\${money(b.balance_cents)}</td>
-        <td>\${who}</td>
-        <td><button class="btn gray" onclick="delBooking(\${b.id})">Delete</button></td>\`;
-      tb2.appendChild(tr);
-    });
-  }
-}
-
-async function delBlackout(id){
-  if(!confirm('Delete blackout '+id+'?')) return;
-  const r = await fetch(\`\${API}/api/admin/blackouts/\${id}\`, {method:'DELETE', headers:hdrs()});
-  if(!r.ok) return alert('Delete failed');
-  loadMonth();
-}
-async function delBooking(id){
-  if(!confirm('Delete booking '+id+'?')) return;
-  const r = await fetch(\`\${API}/api/admin/bookings/\${id}\`, {method:'DELETE', headers:hdrs()});
-  if(!r.ok) return alert('Delete failed');
-  loadMonth();
-}
-
-(function(){
-  const d = new Date();
-  document.getElementById('month').value = d.toISOString().slice(0,7);
-  loadMonth();
-})();
-</script>
-</body>
-</html>`);
-});
-
 // ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
   const session_id = req.query.session_id || "";
@@ -978,7 +727,7 @@ app.get("/booking-success", async (req, res) => {
   .card{background:#fff;border:1px solid #eee;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.05)}
   h1{font-size:34px;margin:0 0 10px}
   p{margin:8px 0;color:var(--mut)}
-  .cta{display:inline-block;margin-top:18px;background:var(--btn);color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;text-decoration:none}
+  .cta{display:inline-block;margin-top:18px;background:#7B8B74;color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;text-decoration:none}
   .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:16px}
   .pill{background:#f3f8f3;border:1px solid #e5efe5;border-radius:999px;padding:8px 12px;font-size:13px}
 </style></head>
