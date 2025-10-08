@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chef Admin</title>
+  <style>
+    body { font-family: sans-serif; background:#fafafa; margin:20px; }
+    h2 { margin-top:30px; }
+    pre { background:#fff; border:1px solid #ddd; padding:10px; border-radius:8px; white-space:pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Chef Admin Dashboard</h1>
+  <p>Automatically loads bookings and blackouts below.</p>
+
+  <h2>Bookings</h2>
+  <pre id="bookings">Loading…</pre>
+
+  <h2>Blackout Dates</h2>
+  <pre id="blackouts">Loading…</pre>
+
+  <script>
+    const ADMIN_KEY = "YOUR_ADMIN_KEY_HERE"; // <-- change this to your Render ADMIN_KEY
+    const BASE = "https://chef-booking-backend.onrender.com";
+
+    async function loadData() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+
+      const headers = { "x-admin-key": ADMIN_KEY };
+
+      const [bookingsRes, blackoutsRes] = await Promise.all([
+        fetch(`${BASE}/__admin/list-bookings?year=${year}&month=${month}`, { headers }),
+        fetch(`${BASE}/__admin/list-blackouts?year=${year}&month=${month}`, { headers })
+      ]);
+
+      const bookings = await bookingsRes.json();
+      const blackouts = await blackoutsRes.json();
+
+      document.getElementById("bookings").textContent = JSON.stringify(bookings, null, 2);
+      document.getElementById("blackouts").textContent = JSON.stringify(blackouts, null, 2);
+    }
+
+    loadData().catch(err => {
+      document.body.innerHTML = `<p style="color:red">Error: ${err.message}</p>`;
+    });
+  </script>
+</body>
+</html>
