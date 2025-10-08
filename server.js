@@ -1,4 +1,4 @@
-// server.js — COMPLETE DROP-IN (ESM, careful changes only)
+// server.js — COMPLETE DROP-IN (ESM)
 // Flow: Create PENDING booking -> Stripe Checkout -> webhook CONFIRMS & emails
 // Service area: Manhattan, Brooklyn, Queens, Nassau, Suffolk
 
@@ -12,9 +12,6 @@ dotenv.config();
 
 const app  = express();
 const port = process.env.PORT || 3000;
-
-// CHANGED: trust proxy so req.ip is accurate on Render/Heroku/etc.
-app.set("trust proxy", 1);
 
 // ----------------- Stripe -----------------
 const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
@@ -174,28 +171,41 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       let depositText = "Deposit received";
       try {
         if (session.payment_intent) {
-          const pi = await stripe.paymentIntents.retrieve(session.payment_intent);
-          const ch = pi.charges?.data?.[0];
+          const PI = await stripe.paymentIntents.retrieve(session.payment_intent);
+          const ch = PI.charges?.data?.[0];
           if (ch?.receipt_url) receiptUrl = ch.receipt_url;
-          if (pi.amount_received) depositText = fmtUSD(pi.amount_received);
+          if (PI.amount_received) depositText = fmtUSD(PI.amount_received);
         }
       } catch (e) {
         console.warn("Could not fetch receipt URL", e.message);
       }
 
       if (bookingId) {
+        // ✅ Backfill any fields that might be null on older rows
         await pool.query(
           `UPDATE bookings
              SET status='confirmed',
-                 stripe_session_id=$2,
-                 customer_name=$3,
-                 customer_email=$4
+                 stripe_session_id = $2,
+                 customer_name     = $3,
+                 customer_email    = $4,
+                 phone             = COALESCE(phone, $5),
+                 address_line1     = COALESCE(address_line1, $6),
+                 city              = COALESCE(city, $7),
+                 state             = COALESCE(state, $8),
+                 zip               = COALESCE(zip, $9),
+                 diet_notes        = COALESCE(diet_notes, $10)
            WHERE id=$1`,
           [
             bookingId,
             session.id,
             `${md.first_name || ""} ${md.last_name || ""}`.trim(),
-            session.customer_details?.email || md.email || ""
+            session.customer_details?.email || md.email || "",
+            md.phone || "",
+            md.address_line1 || "",
+            md.city || "",
+            md.state || "",
+            md.zip || "",
+            md.diet_notes || ""
           ]
         );
         console.log(`✅ Confirmed booking #${bookingId} from Stripe session ${session.id}`);
@@ -225,7 +235,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const pkgTitle   = md.package_title || md.package || "Private Event";
       const guests     = md.guests || "";
       const startTime  = md.start_time || "18:00";
-      const successPage = `${process.env.SITE_URL}/booking-success`; // static page link
+      const successPage = `${process.env.SITE_URL}/booking-success`;
       const confCode   = shortCodeFromSessionId(session.id);
       const logoUrl    = process.env.EMAIL_LOGO_URL || "";
 
@@ -333,46 +343,30 @@ app.get("/api/availability", async (req, res) => {
 });
 
 // ----------------- reCAPTCHA verify -----------------
-// CHANGED: fail CLOSED, read either env var name, and log details.
 async function verifyRecaptcha(token, ip) {
   try {
-    const secret =
-      process.env.RECAPTCHA_SECRET ||
-      process.env.RECAPTCHA_SECRET_KEY ||
-      "";
-
+    const secret = process.env.RECAPTCHA_SECRET;
     if (!secret) {
-      console.error("❌ RECAPTCHA secret missing (set RECAPTCHA_SECRET in Render).");
-      return false; // FAIL CLOSED (no more bypass)
+      console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification.");
+      return true; // allow while wiring up
     }
-    if (!token) {
-      console.warn("❌ Missing reCAPTCHA token from client.");
-      return false;
-    }
-
-    const params = new URLSearchParams({ secret, response: token });
-    // Only attach remoteip if it looks plausible
-    if (typeof ip === "string" && ip.length > 3) params.append("remoteip", ip);
+    if (!token) return false;
 
     const resp = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params
+      body: new URLSearchParams({ secret, response: token, remoteip: ip || "" })
     });
     const data = await resp.json();
-
-    // Log once for visibility; keep concise
-    console.log("reCAPTCHA verify ->", {
-      success: data?.success,
-      hostname: data?.hostname,
-      // error codes help diagnose invalid-input-secret/sitekey
-      errors: data?.["error-codes"] || []
-    });
-
+    console.log("reCAPTCHA verify -> {",
+      "\n  success:", !!data.success + ",",
+      "\n  hostname:", data.hostname ? `'${data.hostname}'` : "undefined,",
+      "\n  errors:", Array.isArray(data["error-codes"]) ? JSON.stringify(data["error-codes"]) : "[]",
+      "\n}");
     return data.success === true;
   } catch (e) {
     console.error("reCAPTCHA verify error:", e);
-    return false; // FAIL CLOSED on errors
+    return false;
   }
 }
 
@@ -397,7 +391,7 @@ app.post("/api/quote", (req, res) => {
   }
 });
 
-// ----------------- Book (Stripe Checkout, now saves PENDING) -----------------
+// ----------------- Book (Stripe Checkout, saves PENDING) -----------------
 app.post("/api/book", async (req, res) => {
   try {
     if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
@@ -435,7 +429,7 @@ app.post("/api/book", async (req, res) => {
       });
     }
 
-    // 3) Pricing (UPDATED per-person + upsells)
+    // 3) Pricing (per-person + upsells)
     const PKG = {
       tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
@@ -448,7 +442,7 @@ app.post("/api/book", async (req, res) => {
     const bartender  = String(b.bartender || "").toLowerCase() === "yes" || b.bartender === true;
     const tablescape = String(b.tablescape || "").toLowerCase() === "yes" || b.tablescape === true;
 
-    const bartenderFeeCents  = bartender  ? 300 * 100 : 0;      // flat $300
+    const bartenderFeeCents  = bartender  ? 300 * 100 : 0;          // flat $300
     const tablescapeFeeCents = tablescape ? (15 * guests) * 100 : 0; // $15 per guest
 
     const baseSubtotalCents  = Math.round(perPerson * guests * 100);
@@ -565,14 +559,14 @@ app.post("/api/book", async (req, res) => {
 });
 
 // ----------------- Admin protection -----------------
-// (kept as-is)
 function requireAdmin(req, res, next) {
   const key = req.headers["x-admin-key"];
-  if (!process.env.ADMIN_KEY || key === process.env.ADMIN_KEY) return next();
+  if (!process.env.ADMIN_KEY) return next(); // if unset, allow (dev); set ADMIN_KEY in prod!
+  if (key === process.env.ADMIN_KEY) return next();
   return res.status(401).json({ error: "Unauthorized" });
 }
 
-// ----------------- Admin APIs (unchanged except fields exist) -----------------
+// ----------------- Admin APIs -----------------
 app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
   try {
     const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
@@ -693,7 +687,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin list pages -----------------
+// ----------------- Admin list pages (JSON for admin.html) -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -722,6 +716,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
     const r = await pool.query(
       `SELECT id,start_at,end_at,status,customer_name,customer_email,
               package_title, guests,
+              phone, address_line1, city, state, zip, diet_notes,
               bartender, tablescape,
               subtotal_cents, deposit_cents, balance_cents
          FROM bookings
@@ -733,6 +728,275 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   } catch (e) {
     console.error(e); res.status(500).json([]);
   }
+});
+
+// ----------------- Admin UI (green page) -----------------
+app.get("/admin", (_req, res) => {
+  const BASE = ""; // same origin
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Chef Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{--ink:#2c3e2f;--mut:#6b7280;--bg:#f3f7f3;--panel:#fff;--line:#e5e7eb;--green:#1c7a1c;--btn:#7B8B74;--pill:#e9f3ea;--bad:#c62828;}
+  *{box-sizing:border-box}
+  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
+  header{background:#265f2f;color:#fff;padding:14px 16px;font-weight:800}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  .row{display:grid;grid-template-columns:1fr 360px;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
+  .pad{padding:12px 14px}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  select,input[type="month"],input[type="text"],input[type="date"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
+  button.secondary{background:#e8eee7;color:#2c3e2f;border:1px solid var(--line)}
+  .list{display:flex;flex-direction:column}
+  .rowb{display:grid;grid-template-columns:120px 1fr 120px 64px 110px 120px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+  .rowb.hidden{display:none}
+  .pill{background:var(--pill);color:var(--green);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block}
+  .pill.gray{background:#f1f1f1;color:#555}
+  .pill.bad{background:#fde7e7;color:#9a1b1b}
+  .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .money div{font-size:22px;font-weight:800}
+  .small{font-size:12px;color:#666}
+  .danger{background:#fff;border:1px solid #f4caca;color:#9a1b1b}
+  .right{display:flex;gap:8px;justify-content:flex-end}
+  .flex{display:flex;gap:8px;align-items:center}
+  .mt8{margin-top:8px}
+  .wide{width:100%}
+</style>
+</head>
+<body>
+<header>Chef Admin</header>
+<div class="wrap">
+
+  <div class="toolbar">
+    <label>Month</label>
+    <select id="mSel"></select>
+    <label>Year</label>
+    <select id="ySel"></select>
+    <button id="refresh">Refresh</button>
+    <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key header)"/>
+    <button id="saveKey" class="secondary">Save</button>
+    <button id="clearKey" class="secondary">Clear</button>
+  </div>
+
+  <div class="row">
+    <div class="card">
+      <div class="head">Bookings</div>
+      <div class="list" id="bookings"></div>
+    </div>
+
+    <div class="card">
+      <div class="head">Blackout Dates</div>
+      <div class="pad">
+        <div class="flex">
+          <input type="date" id="bd-date"/>
+          <input type="text" id="bd-reason" placeholder="Reason (optional)" style="flex:1"/>
+          <button id="bd-add">Add blackout</button>
+        </div>
+        <div class="flex mt8">
+          <input type="text" id="bd-bulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD,…" class="wide"/>
+          <button id="bd-add-bulk">Add bulk</button>
+        </div>
+      </div>
+      <div class="list" id="blackouts"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const BASE = ${JSON.stringify(BASE)};
+
+  const mSel = document.getElementById("mSel");
+  const ySel = document.getElementById("ySel");
+  const refreshBtn = document.getElementById("refresh");
+  const keyInput = document.getElementById("admKey");
+  const saveKey = document.getElementById("saveKey");
+  const clearKey = document.getElementById("clearKey");
+
+  // month/year selectors
+  const now = new Date();
+  for (let i=1;i<=12;i++){
+    const o = document.createElement("option");
+    o.value = i; o.textContent = new Date(2025, i-1, 1).toLocaleString("en-US", {month:"long"});
+    mSel.appendChild(o);
+  }
+  const yearStart = now.getFullYear() - 1;
+  for (let y=yearStart; y<=yearStart+3; y++){
+    const o = document.createElement("option");
+    o.value = y; o.textContent = y; ySel.appendChild(o);
+  }
+  mSel.value = String(now.getMonth()+1);
+  ySel.value = String(now.getFullYear());
+
+  // admin key in localStorage
+  keyInput.value = localStorage.getItem("chef_admin_key") || "";
+  saveKey.onclick = () => { localStorage.setItem("chef_admin_key", keyInput.value || ""); alert("Saved."); };
+  clearKey.onclick = () => { localStorage.removeItem("chef_admin_key"); keyInput.value=""; alert("Cleared."); };
+
+  function hdrs(){
+    const h = {"Content-Type":"application/json"};
+    const k = localStorage.getItem("chef_admin_key");
+    if (k) h["x-admin-key"] = k;
+    return h;
+  }
+  async function fetchJson(url, opts){ const r = await fetch(url, opts); try{ return await r.json(); }catch{ return null; } }
+
+  function usd(c){ return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"}); }
+  function dstr(ts){ const d = new Date(ts); return d.toLocaleDateString("en-US", {month:"short", day:"2-digit", year:"numeric"}); }
+
+  // ------- BOOKING LOADER -------
+  async function loadBookings(){
+    const y = ySel.value, m = mSel.value;
+    const data = await fetchJson(\`\${BASE}/__admin/list-bookings?year=\${y}&month=\${m}\`, { headers: hdrs() });
+    const wrap = document.getElementById("bookings");
+    wrap.innerHTML = "";
+    if (!Array.isArray(data) || data.length === 0){
+      const empty = document.createElement("div");
+      empty.className = "pad small";
+      empty.textContent = "No bookings this month.";
+      wrap.appendChild(empty);
+      return;
+    }
+
+    data.forEach(b => {
+      const row = document.createElement("div");
+      row.className = "rowb";
+
+      const date = document.createElement("div");
+      date.innerHTML = \`<div style="font-weight:800">\${new Date(b.start_at).toLocaleDateString("en-US",{month:"short", day:"2-digit"})}</div><div class="small">\${new Date(b.start_at).getFullYear()}</div>\`;
+
+      const cust = document.createElement("div");
+      cust.innerHTML = \`<div style="font-weight:700">\${b.customer_name || "—"}</div><div class="small">\${b.customer_email || "—"}</div>\`;
+
+      const pkg = document.createElement("div");
+      pkg.textContent = b.package_title || "—";
+
+      const guests = document.createElement("div");
+      guests.textContent = b.guests ?? "—";
+
+      const dep = document.createElement("div");
+      dep.textContent = usd(b.deposit_cents);
+
+      const status = document.createElement("div");
+      status.innerHTML = \`<span class="pill \${b.status==="confirmed"?"":"gray"}">\${b.status||"—"}</span>\`;
+
+      row.append(date, cust, pkg, guests, dep, status);
+      wrap.appendChild(row);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+
+      const left = document.createElement("div");
+      left.innerHTML = \`
+        <div style="font-weight:800;margin-bottom:6px">Address</div>
+        <div class="small">\${[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ") || "—"}</div>
+        <div style="font-weight:800;margin:12px 0 6px">Phone</div>
+        <div class="small">\${b.phone || "—"}</div>
+        <div style="font-weight:800;margin:12px 0 6px">Diet notes</div>
+        <div class="small" style="white-space:pre-wrap">\${b.diet_notes || "—"}</div>
+        <div style="margin-top:12px;display:flex;gap:8px">
+          \${b.bartender ? '<span class="pill">Bartender</span>' : ''}
+          \${b.tablescape ? '<span class="pill">Tablescape</span>' : ''}
+        </div>
+      \`;
+
+      const right = document.createElement("div");
+      right.className = "money";
+      right.innerHTML = \`
+        <div class="small" style="font-weight:800;margin-bottom:6px">Amounts</div>
+        <div>Subtotal: \${usd(b.subtotal_cents)}</div>
+        <div>Deposit: \${usd(b.deposit_cents)}</div>
+        <div>Balance: \${usd(b.balance_cents)}</div>
+        <div class="right mt8">
+          <button class="secondary" data-hide>Hide</button>
+          <button class="danger" data-del-booking data-id="\${b.id}">Delete</button>
+        </div>
+      \`;
+
+      meta.append(left, right);
+      wrap.appendChild(meta);
+
+      right.querySelector('[data-hide]').onclick = () => { meta.style.display = meta.style.display==="none"?"grid":"none"; };
+    });
+
+    // wire delete buttons
+    wrap.querySelectorAll('[data-del-booking]').forEach(btn=>{
+      btn.onclick = async () => {
+        if (!confirm("Delete this booking? (Use for test rows only)")) return;
+        const id = btn.getAttribute("data-id");
+        const r = await fetch(\`\${BASE}/api/admin/bookings/\${id}\`, { method:"DELETE", headers: hdrs() });
+        if (r.ok) { alert("Deleted"); loadBookings(); } else { alert("Failed"); }
+      };
+    });
+  }
+
+  // ------- BLACKOUT LOADER -------
+  async function loadBlackouts(){
+    const y = ySel.value, m = mSel.value;
+    const data = await fetchJson(\`\${BASE}/__admin/list-blackouts?year=\${y}&month=\${m}\`, { headers: hdrs() });
+    const wrap = document.getElementById("blackouts");
+    wrap.innerHTML = "";
+    if (!Array.isArray(data) || data.length === 0){
+      const empty = document.createElement("div");
+      empty.className = "pad small";
+      empty.textContent = "No blackouts this month.";
+      wrap.appendChild(empty);
+      return;
+    }
+    data.forEach(d => {
+      const row = document.createElement("div");
+      row.className = "rowb";
+      row.style.gridTemplateColumns = "1fr 1fr 100px";
+      row.innerHTML = \`
+        <div>\${dstr(d.start_at)}</div>
+        <div class="small">\${(d.reason||"—")}</div>
+        <div class="right"><button class="danger" data-del data-id="\${d.id}">Delete</button></div>
+      \`;
+      wrap.appendChild(row);
+    });
+    wrap.querySelectorAll('[data-del]').forEach(btn=>{
+      btn.onclick = async () => {
+        if (!confirm("Delete this blackout date?")) return;
+        const id = btn.getAttribute("data-id");
+        const r = await fetch(\`\${BASE}/api/admin/blackouts/\${id}\`, { method:"DELETE", headers: hdrs() });
+        if (r.ok) { loadBlackouts(); } else { alert("Failed"); }
+      };
+    });
+  }
+
+  refreshBtn.onclick = () => { loadBookings(); loadBlackouts(); };
+
+  // Add blackout (single)
+  document.getElementById("bd-add").onclick = async () => {
+    const date = document.getElementById("bd-date").value;
+    const reason = document.getElementById("bd-reason").value;
+    if (!date) return alert("Pick a date");
+    const r = await fetch(\`\${BASE}/api/admin/blackouts\`, { method:"POST", headers: hdrs(), body: JSON.stringify({ date, reason }) });
+    if (r.ok) { document.getElementById("bd-date").value=""; document.getElementById("bd-reason").value=""; loadBlackouts(); }
+    else alert("Failed");
+  };
+
+  // Add blackout (bulk)
+  document.getElementById("bd-add-bulk").onclick = async () => {
+    const raw = (document.getElementById("bd-bulk").value||"").trim();
+    if (!raw) return alert("Enter comma-separated YYYY-MM-DD dates");
+    const dates = raw.split(",").map(s=>s.trim()).filter(Boolean);
+    const r = await fetch(\`\${BASE}/api/admin/blackouts/bulk\`, { method:"POST", headers: hdrs(), body: JSON.stringify({ dates }) });
+    if (r.ok) { document.getElementById("bd-bulk").value=""; loadBlackouts(); }
+    else alert("Failed");
+  };
+
+  // initial load
+  loadBookings(); loadBlackouts();
+</script>
+</body></html>`);
 });
 
 // ----------------- Success page (unchanged visuals) -----------------
@@ -776,15 +1040,6 @@ app.get("/booking-success", async (req, res) => {
   (function frame(){ confetti({particleCount:3, spread:70, origin:{y:0.6}}); if(Date.now()<end) requestAnimationFrame(frame); })();
 </script>
 </body></html>`);
-});
-
-import path from "path";
-import { fileURLToPath } from "url";
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Serve admin.html
-app.get("/admin", (req, res) => {
-  res.sendFile(path.join(__dirname, "admin.html"));
 });
 
 // ----------------- Start server -----------------
