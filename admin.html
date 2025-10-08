@@ -1,50 +1,295 @@
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
   <title>Chef Admin</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
-    body { font-family: sans-serif; background:#fafafa; margin:20px; }
-    h2 { margin-top:30px; }
-    pre { background:#fff; border:1px solid #ddd; padding:10px; border-radius:8px; white-space:pre-wrap; }
+    :root{
+      --green:#2e7d5a;
+      --green-dark:#1f5e41;
+      --bg:#f6faf7;
+      --card:#ffffff;
+      --mut:#6b7280;
+      --line:#e5e7eb;
+      --danger:#b91c1c;
+      --pill:#eaf6ef;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    .bar{background:var(--green);color:#fff;padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+    .bar h1{font-size:18px;margin:0;font-weight:800;letter-spacing:.3px}
+    .bar .sp{flex:1}
+    .keyctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .keyctl input{padding:8px 10px;border-radius:8px;border:1px solid #125634;min-width:260px}
+    .keyctl button{background:#fff;color:var(--green);border:none;padding:8px 12px;border-radius:8px;font-weight:700;cursor:pointer}
+    .wrap{max-width:1200px;margin:20px auto;padding:0 16px}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:1000px){.row{grid-template-columns:1fr 1fr}}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
+    .card h2{margin:0 0 8px;font-size:16px}
+    .mut{color:var(--mut);font-size:13px;margin:0 0 10px}
+    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0 12px}
+    .btn{background:var(--green);color:#fff;border:none;padding:9px 12px;border-radius:10px;font-weight:700;cursor:pointer}
+    .btn.alt{background:#fff;color:var(--green);border:1px solid var(--green)}
+    .btn.bad{background:var(--danger)}
+    input,select{padding:8px 10px;border-radius:8px;border:1px solid #d1d5db}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;border-top:1px solid var(--line);text-align:left;vertical-align:top}
+    th{font-size:12px;color:#374151;text-transform:uppercase;letter-spacing:.04em}
+    .pill{display:inline-block;background:var(--pill);border:1px solid #dcefe3;color:var(--green-dark);padding:4px 8px;border-radius:999px;font-size:12px}
+    .empty{color:#9ca3af;font-style:italic;padding:6px 0}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .right{text-align:right}
   </style>
 </head>
 <body>
-  <h1>Chef Admin Dashboard</h1>
-  <p>Automatically loads bookings and blackouts below.</p>
+  <div class="bar">
+    <h1>Chef Admin</h1>
+    <div class="sp"></div>
+    <div class="keyctl">
+      <input id="key" type="password" placeholder="Paste ADMIN_KEY…">
+      <button id="saveKey">Save</button>
+      <button id="clearKey" class="btn alt" style="background:#fff">Clear</button>
+    </div>
+  </div>
 
-  <h2>Bookings</h2>
-  <pre id="bookings">Loading…</pre>
+  <div class="wrap">
+    <div class="card">
+      <div class="controls">
+        <label>Month
+          <select id="month"></select>
+        </label>
+        <label>Year
+          <select id="year"></select>
+        </label>
+        <button id="refresh" class="btn">Refresh</button>
+      </div>
+      <div class="row">
+        <div class="card">
+          <h2>Bookings</h2>
+          <p class="mut">Confirmed bookings for the selected month.</p>
+          <div id="bookingsWrap"></div>
+        </div>
+        <div class="card">
+          <h2>Blackout Dates</h2>
+          <p class="mut">Manage dates you’re unavailable.</p>
 
-  <h2>Blackout Dates</h2>
-  <pre id="blackouts">Loading…</pre>
+          <div class="grid2" style="margin-bottom:10px">
+            <input type="date" id="blkDate">
+            <input type="text" id="blkReason" placeholder="Reason (optional)">
+          </div>
+          <div class="controls">
+            <button id="addBlk" class="btn">Add blackout</button>
+            <input id="bulkDates" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD…" style="flex:1">
+            <button id="addBulk" class="btn alt">Add bulk</button>
+          </div>
 
-  <script>
-    const ADMIN_KEY = "Ultrachris2022"; // <-- change this to your Render ADMIN_KEY
-    const BASE = "https://chef-booking-backend.onrender.com";
+          <div id="blackoutsWrap"></div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-    async function loadData() {
-      const now = new Date();
-      const year = now.getFullYear();
-      const month = now.getMonth() + 1;
+<script>
+(() => {
+  const BASE = "https://chef-booking-backend.onrender.com";
+  // read ?key= from URL once if present
+  const urlKey = new URLSearchParams(location.search).get("key");
+  if (urlKey) localStorage.setItem("ADMIN_KEY", urlKey);
 
-      const headers = { "x-admin-key": ADMIN_KEY };
+  const keyInput = document.getElementById("key");
+  keyInput.value = localStorage.getItem("ADMIN_KEY") || "";
 
-      const [bookingsRes, blackoutsRes] = await Promise.all([
-        fetch(`${BASE}/__admin/list-bookings?year=${year}&month=${month}`, { headers }),
-        fetch(`${BASE}/__admin/list-blackouts?year=${year}&month=${month}`, { headers })
-      ]);
+  document.getElementById("saveKey").onclick = () => {
+    localStorage.setItem("ADMIN_KEY", keyInput.value.trim());
+    alert("Saved.");
+    loadAll();
+  };
+  document.getElementById("clearKey").onclick = () => {
+    localStorage.removeItem("ADMIN_KEY");
+    keyInput.value = "";
+    alert("Cleared.");
+  };
 
-      const bookings = await bookingsRes.json();
-      const blackouts = await blackoutsRes.json();
+  const monthSel = document.getElementById("month");
+  const yearSel  = document.getElementById("year");
+  const now = new Date();
+  for (let m=1;m<=12;m++){
+    const o=document.createElement("option");
+    o.value=m; o.textContent=new Date(2000,m-1,1).toLocaleString('en',{month:'long'});
+    if (m===now.getMonth()+1) o.selected=true;
+    monthSel.appendChild(o);
+  }
+  const thisYear = now.getFullYear();
+  for (let y=thisYear-1;y<=thisYear+2;y++){
+    const o=document.createElement("option"); o.value=y; o.textContent=y;
+    if (y===thisYear) o.selected=true;
+    yearSel.appendChild(o);
+  }
+  document.getElementById("refresh").onclick = loadAll;
 
-      document.getElementById("bookings").textContent = JSON.stringify(bookings, null, 2);
-      document.getElementById("blackouts").textContent = JSON.stringify(blackouts, null, 2);
+  function headers(){
+    const k = localStorage.getItem("ADMIN_KEY") || "";
+    if (!k) throw new Error("Admin key not set (paste it at top right).");
+    return { "x-admin-key": k, "Content-Type":"application/json" };
+  }
+
+  function fmtDate(iso){
+    if(!iso) return "";
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'});
+  }
+  function usd(cents){
+    const n = Number(cents||0)/100;
+    return n.toLocaleString("en-US",{style:"currency",currency:"USD"});
+  }
+
+  async function fetchJson(path){
+    const r = await fetch(path, { headers: headers() });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error||"Request failed");
+    return j;
+  }
+
+  // ----- LOADERS -----
+  async function loadBookings(){
+    const y = yearSel.value, m = monthSel.value;
+    const data = await fetchJson(`${BASE}/__admin/list-bookings?year=${y}&month=${m}`);
+    const el = document.getElementById("bookingsWrap");
+    if (!Array.isArray(data) || data.length===0){
+      el.innerHTML = `<div class="empty">No bookings this month.</div>`;
+      return;
     }
-
-    loadData().catch(err => {
-      document.body.innerHTML = `<p style="color:red">Error: ${err.message}</p>`;
+    const rows = data.map(b => {
+      const day = fmtDate(b.start_at);
+      const dep = usd(b.deposit_cents);
+      const name = (b.customer_name||"").trim() || "—";
+      const email = (b.customer_email||"").trim() || "—";
+      const pkg = b.package_title || "—";
+      const guests = b.guests ?? "—";
+      const status = b.status || "—";
+      return `
+        <tr>
+          <td>${day}</td>
+          <td><div>${name}</div><div class="mut" style="font-size:12px">${email}</div></td>
+          <td>${pkg}</td>
+          <td>${guests}</td>
+          <td>${dep}</td>
+          <td><span class="pill">${status}</span></td>
+          <td class="right">
+            <button class="btn alt" data-del-booking="${b.id}">Delete</button>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    el.innerHTML = `
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Customer</th><th>Package</th>
+          <th>Guests</th><th>Deposit</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+    el.querySelectorAll("[data-del-booking]").forEach(btn=>{
+      btn.onclick = async () => {
+        if (!confirm("Delete this booking? (Use for test rows only)")) return;
+        const id = btn.getAttribute("data-del-booking");
+        const r = await fetch(`${BASE}/api/admin/bookings/${id}`, {
+          method:"DELETE", headers: headers()
+        });
+        if (!r.ok) { alert("Delete failed"); return; }
+        loadBookings();
+      };
     });
-  </script>
+  }
+
+  async function loadBlackouts(){
+    const y = yearSel.value, m = monthSel.value;
+    const data = await fetchJson(`${BASE}/__admin/list-blackouts?year=${y}&month=${m}`);
+    const el = document.getElementById("blackoutsWrap");
+    if (!Array.isArray(data) || data.length===0){
+      el.innerHTML = `<div class="empty">No blackouts this month.</div>`;
+      return;
+    }
+    const rows = data.map(b => {
+      const day = fmtDate(b.start_at);
+      const reason = (b.reason||"").trim() || "—";
+      return `
+        <tr>
+          <td>${day}</td>
+          <td>${reason}</td>
+          <td class="right"><button class="btn bad" data-del="${b.id}">Delete</button></td>
+        </tr>
+      `;
+    }).join("");
+    el.innerHTML = `
+      <table>
+        <thead><tr><th>Date</th><th>Reason</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+    el.querySelectorAll("[data-del]").forEach(btn=>{
+      btn.onclick = async () => {
+        if (!confirm("Delete this blackout date?")) return;
+        const id = btn.getAttribute("data-del");
+        const r = await fetch(`${BASE}/api/admin/blackouts/${id}`, {
+          method:"DELETE", headers: headers()
+        });
+        if (!r.ok) { alert("Delete failed"); return; }
+        loadBlackouts();
+      };
+    });
+  }
+
+  // ----- ACTIONS -----
+  document.getElementById("addBlk").onclick = async () => {
+    try{
+      const date = document.getElementById("blkDate").value;
+      const reason = document.getElementById("blkReason").value.trim();
+      if (!date) { alert("Pick a date."); return; }
+      const r = await fetch(`${BASE}/api/admin/blackouts`, {
+        method:"POST",
+        headers: headers(),
+        body: JSON.stringify({ date, reason })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error||"Add failed");
+      document.getElementById("blkDate").value="";
+      document.getElementById("blkReason").value="";
+      loadBlackouts();
+    }catch(e){ alert(e.message); }
+  };
+
+  document.getElementById("addBulk").onclick = async () => {
+    try{
+      const raw = document.getElementById("bulkDates").value.trim();
+      if (!raw){ alert("Enter comma-separated dates, e.g. 2025-10-22,2025-10-23"); return; }
+      const dates = raw.split(",").map(s=>s.trim()).filter(Boolean);
+      const reason = document.getElementById("blkReason").value.trim();
+      const r = await fetch(`${BASE}/api/admin/blackouts/bulk`, {
+        method:"POST",
+        headers: headers(),
+        body: JSON.stringify({ dates, reason })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error||"Bulk add failed");
+      document.getElementById("bulkDates").value="";
+      loadBlackouts();
+    }catch(e){ alert(e.message); }
+  };
+
+  async function loadAll(){
+    try{
+      await Promise.all([loadBookings(), loadBlackouts()]);
+    }catch(e){
+      alert(e.message);
+    }
+  }
+
+  loadAll();
+})();
+</script>
 </body>
 </html>
