@@ -1,4 +1,3 @@
-
 // server.js — COMPLETE DROP-IN (ESM, careful changes only)
 // Flow: Create PENDING booking -> Stripe Checkout -> webhook CONFIRMS & emails
 // Service area: Manhattan, Brooklyn, Queens, Nassau, Suffolk
@@ -13,6 +12,9 @@ dotenv.config();
 
 const app  = express();
 const port = process.env.PORT || 3000;
+
+// CHANGED: trust proxy so req.ip is accurate on Render/Heroku/etc.
+app.set("trust proxy", 1);
 
 // ----------------- Stripe -----------------
 const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
@@ -331,25 +333,46 @@ app.get("/api/availability", async (req, res) => {
 });
 
 // ----------------- reCAPTCHA verify -----------------
+// CHANGED: fail CLOSED, read either env var name, and log details.
 async function verifyRecaptcha(token, ip) {
   try {
-    const secret = process.env.RECAPTCHA_SECRET;
+    const secret =
+      process.env.RECAPTCHA_SECRET ||
+      process.env.RECAPTCHA_SECRET_KEY ||
+      "";
+
     if (!secret) {
-      console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification.");
-      return true; // allow while wiring up
+      console.error("❌ RECAPTCHA secret missing (set RECAPTCHA_SECRET in Render).");
+      return false; // FAIL CLOSED (no more bypass)
     }
-    if (!token) return false;
+    if (!token) {
+      console.warn("❌ Missing reCAPTCHA token from client.");
+      return false;
+    }
+
+    const params = new URLSearchParams({ secret, response: token });
+    // Only attach remoteip if it looks plausible
+    if (typeof ip === "string" && ip.length > 3) params.append("remoteip", ip);
 
     const resp = await fetch("https://www.google.com/recaptcha/api/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ secret, response: token, remoteip: ip || "" })
+      body: params
     });
     const data = await resp.json();
+
+    // Log once for visibility; keep concise
+    console.log("reCAPTCHA verify ->", {
+      success: data?.success,
+      hostname: data?.hostname,
+      // error codes help diagnose invalid-input-secret/sitekey
+      errors: data?.["error-codes"] || []
+    });
+
     return data.success === true;
   } catch (e) {
     console.error("reCAPTCHA verify error:", e);
-    return false;
+    return false; // FAIL CLOSED on errors
   }
 }
 
@@ -542,6 +565,7 @@ app.post("/api/book", async (req, res) => {
 });
 
 // ----------------- Admin protection -----------------
+// (kept as-is)
 function requireAdmin(req, res, next) {
   const key = req.headers["x-admin-key"];
   if (!process.env.ADMIN_KEY || key === process.env.ADMIN_KEY) return next();
