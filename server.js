@@ -856,7 +856,12 @@ app.get("/admin", (_req, res) => {
   async function fetchJson(url, opts){ const r = await fetch(url, opts); try{ return await r.json(); }catch{ return null; } }
 
   function usd(c){ return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"}); }
-  function dstr(ts){ const d = new Date(ts); return d.toLocaleDateString("en-US", {month:"short", day:"2-digit", year:"numeric"}); }
+  function dstr(ts){
+  if (!ts) return "";
+  const [y,m,d] = String(ts).slice(0,10).split("-");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[Number(m)-1]} ${d}, ${y}`;
+}
 
   // ------- BOOKING LOADER -------
   async function loadBookings(){
