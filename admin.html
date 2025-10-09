@@ -128,12 +128,13 @@
     function usd(cents){ return (Number(cents||0)/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
 
     // *** UTC-SAFE DATE FORMATTER (fixes off-by-one) ***
-    function fmtDateUTC(iso){
-      if(!iso) return '';
-      return new Intl.DateTimeFormat('en-US',{
-        year:'numeric', month:'short', day:'numeric', timeZone:'UTC'
-      }).format(new Date(iso));
-    }
+function fmtDate(iso){
+    // iso looks like "2025-12-06T00:00:00.000Z"
+    if (!iso) return '';
+    const [y,m,d] = iso.slice(0,10).split('-'); // use the UTC date only
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return `${months[Number(m)-1]} ${Number(d)}, ${y}`;
+  }
 
     function safe(s){ return (s ?? '').toString().trim(); }
 
