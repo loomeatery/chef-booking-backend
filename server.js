@@ -826,7 +826,7 @@ app.get("/admin", (_req, res) => {
     if(!Array.isArray(data)||data.length===0){ var emp=document.createElement(\"div\"); emp.className=\"pad small\"; emp.textContent=\"No bookings this month.\"; wrap.appendChild(emp); return; }\
     data.forEach(function(b){\
       var row=document.createElement(\"div\"); row.className=\"rowb\";\
-      var d=document.createElement(\"div\"); d.innerHTML='<div style=\"font-weight:800\">'+ new Date(b.start_at).toLocaleDateString(\"en-US\",{month:\"short\",day:\"2-digit\"}) +'</div><div class=\"small\">'+ new Date(b.start_at).getFullYear() +'</div>';\
+      var d = document.createElement("div");d.innerHTML ='<div style="font-weight:800">' + dstr(b.start_at) + '</div>' +'<div class="small">' + new Date(b.start_at).getUTCFullYear() + '</div>';
       var c=document.createElement(\"div\"); c.innerHTML='<div style=\"font-weight:700\">'+(b.customer_name||\"—\")+'</div><div class=\"small\">'+(b.customer_email||\"—\")+'</div>';\
       var p=document.createElement(\"div\"); p.textContent=b.package_title||\"—\";\
       var g=document.createElement(\"div\"); g.textContent=(b.guests!=null?b.guests:\"—\");\
