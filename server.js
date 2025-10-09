@@ -28,7 +28,7 @@ const pool = new Pool({
 });
 
 async function initSchema() {
-  // Base tables (keep names the same)
+  // Base tables
   await pool.query(`
     CREATE TABLE IF NOT EXISTS bookings (
       id BIGSERIAL PRIMARY KEY,
@@ -53,7 +53,7 @@ async function initSchema() {
     );
   `);
 
-  // Dedupe + index for blackouts (unchanged)
+  // Dedupe + index for blackouts
   await pool.query(`
     DELETE FROM blackout_dates a
     USING blackout_dates b
@@ -65,7 +65,7 @@ async function initSchema() {
       ON blackout_dates (start_at);
   `);
 
-  // --- Ensure new columns exist on existing 'bookings' tables (idempotent) ---
+  // Add new/nullable booking columns idempotently
   const alters = [
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS created_via TEXT DEFAULT 'online'`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS package_id TEXT`,
@@ -86,7 +86,7 @@ async function initSchema() {
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tablescape_fee_cents INTEGER`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_reference_id TEXT`
   ];
-  for (const sql of alters) { await pool.query(sql); }
+  for (const sql of alters) await pool.query(sql);
 
   console.log("✅ Database schema ready");
 }
@@ -94,17 +94,6 @@ initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); 
 
 // ----------------- Helpers -----------------
 function fmtUSD(cents){ try { return `$${(Number(cents)/100).toFixed(2)}`; } catch { return "$0.00"; } }
-
-// STRICT UTC single-day range helper (prevents off-by-one)
-function dayRangeUtc(ymdStr){
-  // ymdStr: "YYYY-MM-DD"
-  const parts = (ymdStr || '').split('-').map(n => Number(n));
-  const [y, m, d] = parts;
-  if (!y || !m || !d) throw new Error(`Bad date string: ${ymdStr}`);
-  const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
-  const endUtc   = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0));
-  return { startUtc, endUtc };
-}
 
 function inAllowedZip(zip) {
   if (!/^\d{5}$/.test(String(zip))) return false;
@@ -192,7 +181,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       }
 
       if (bookingId) {
-        // ✅ Backfill any fields that might be null on older rows
+        // ✅ Backfill and confirm
         await pool.query(
           `UPDATE bookings
              SET status='confirmed',
@@ -221,9 +210,9 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         );
         console.log(`✅ Confirmed booking #${bookingId} from Stripe session ${session.id}`);
       } else if (eventDate) {
-        // Fallback: create if pending booking was not created (shouldn't happen)
-        const { startUtc: start, endUtc: end } = dayRangeUtc(eventDate);
-
+        // Fallback: create if no pending existed (rare)
+        const start = new Date(`${eventDate}T00:00:00.000Z`);
+        const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
         await pool.query(
           `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email, stripe_session_id)
            VALUES ($1, $2, 'confirmed', $3, $4, $5)
@@ -246,7 +235,6 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const pkgTitle   = md.package_title || md.package || "Private Event";
       const guests     = md.guests || "";
       const startTime  = md.start_time || "18:00";
-      const successPage = `${process.env.SITE_URL}/booking-success`;
       const confCode   = shortCodeFromSessionId(session.id);
       const logoUrl    = process.env.EMAIL_LOGO_URL || "";
 
@@ -381,7 +369,7 @@ async function verifyRecaptcha(token, ip) {
   }
 }
 
-// ----------------- Quote (kept, if you use it elsewhere) -----------------
+// ----------------- Quote -----------------
 app.post("/api/quote", (req, res) => {
   try {
     const guests = Number(req.body?.guests || 0);
@@ -465,8 +453,8 @@ app.post("/api/book", async (req, res) => {
     }
 
     // 3.5) Create PENDING booking row (so we own the ID)
-    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
-    console.log('[BOOK] incoming date:', date, ' -> start_at:', start.toISOString(), ' end_at:', end.toISOString());
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
 
     const pending = await pool.query(
       `INSERT INTO bookings
@@ -572,7 +560,7 @@ app.post("/api/book", async (req, res) => {
 // ----------------- Admin protection -----------------
 function requireAdmin(req, res, next) {
   const key = req.headers["x-admin-key"];
-  if (!process.env.ADMIN_KEY) return next(); // if unset, allow (dev); set ADMIN_KEY in prod!
+  if (!process.env.ADMIN_KEY) return next(); // allow if unset (dev)
   if (key === process.env.ADMIN_KEY) return next();
   return res.status(401).json({ error: "Unauthorized" });
 }
@@ -587,9 +575,11 @@ app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
 
     const starts = [], ends = [];
     for (const d of dates) {
-      const { startUtc, endUtc } = dayRangeUtc(d);
-      starts.push(startUtc.toISOString());
-      ends.push(endUtc.toISOString());
+      const start = new Date(`${d}T00:00:00.000Z`);
+      if (isNaN(start)) return res.status(400).json({ error: `Invalid date: ${d}` });
+      const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+      starts.push(start.toISOString());
+      ends.push(end.toISOString());
     }
 
     const vals = [];
@@ -637,7 +627,8 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
-    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
 
     const r = await pool.query(
       `INSERT INTO blackout_dates (start_at, end_at, reason)
@@ -669,7 +660,8 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   try {
     const { date, name, email } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
-    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
+    const start = new Date(`${date}T00:00:00.000Z`);
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
 
     const r = await pool.query(
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
@@ -694,7 +686,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin list pages (JSON for admin.html) -----------------
+// ----------------- Admin list pages (JSON for admin UI) -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -737,278 +729,154 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (green page) -----------------
+// ----------------- Admin UI (green page, UTC-safe date, no nested templates) -----------------
 app.get("/admin", (_req, res) => {
   const BASE = ""; // same origin
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Chef Admin</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<style>
-  :root{--ink:#2c3e2f;--mut:#6b7280;--bg:#f3f7f3;--panel:#fff;--line:#e5e7eb;--green:#1c7a1c;--btn:#7B8B74;--pill:#e9f3ea;--bad:#c62828;}
-  *{box-sizing:border-box}
-  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
-  header{background:#265f2f;color:#fff;padding:14px 16px;font-weight:800}
-  .wrap{max-width:1100px;margin:0 auto;padding:16px}
-  .row{display:grid;grid-template-columns:1fr 360px;gap:16px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
-  .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
-  .pad{padding:12px 14px}
-  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  select,input[type="month"],input[type="text"],input[type="date"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-  button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
-  button.secondary{background:#e8eee7;color:#2c3e2f;border:1px solid var(--line)}
-  .list{display:flex;flex-direction:column}
-  .rowb{display:grid;grid-template-columns:120px 1fr 120px 64px 110px 120px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
-  .rowb.hidden{display:none}
-  .pill{background:var(--pill);color:var(--green);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block}
-  .pill.gray{background:#f1f1f1;color:#555}
-  .pill.bad{background:#fde7e7;color:#9a1b1b}
-  .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
-  .money div{font-size:22px;font-weight:800}
-  .small{font-size:12px;color:#666}
-  .danger{background:#fff;border:1px solid #f4caca;color:#9a1b1b}
-  .right{display:flex;gap:8px;justify-content:flex-end}
-  .flex{display:flex;gap:8px;align-items:center}
-  .mt8{margin-top:8px}
-  .wide{width:100%}
-</style>
-</head>
-<body>
-<header>Chef Admin</header>
-<div class="wrap">
-
-  <div class="toolbar">
-    <label>Month</label>
-    <select id="mSel"></select>
-    <label>Year</label>
-    <select id="ySel"></select>
-    <button id="refresh">Refresh</button>
-    <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key header)"/>
-    <button id="saveKey" class="secondary">Save</button>
-    <button id="clearKey" class="secondary">Clear</button>
-  </div>
-
-  <div class="row">
-    <div class="card">
-      <div class="head">Bookings</div>
-      <div class="list" id="bookings"></div>
-    </div>
-
-    <div class="card">
-      <div class="head">Blackout Dates</div>
-      <div class="pad">
-        <div class="flex">
-          <input type="date" id="bd-date"/>
-          <input type="text" id="bd-reason" placeholder="Reason (optional)" style="flex:1"/>
-          <button id="bd-add">Add blackout</button>
-        </div>
-        <div class="flex mt8">
-          <input type="text" id="bd-bulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD,…" class="wide"/>
-          <button id="bd-add-bulk">Add bulk</button>
-        </div>
-      </div>
-      <div class="list" id="blackouts"></div>
-    </div>
-  </div>
-</div>
-
-<script>
-  const BASE = ${JSON.stringify("")};
-
-  const mSel = document.getElementById("mSel");
-  const ySel = document.getElementById("ySel");
-  const refreshBtn = document.getElementById("refresh");
-  const keyInput = document.getElementById("admKey");
-  const saveKey = document.getElementById("saveKey");
-  const clearKey = document.getElementById("clearKey");
-
-  // month/year selectors
-  const now = new Date();
-  for (let i=1;i<=12;i++){
-    const o = document.createElement("option");
-    o.value = i; o.textContent = new Date(2025, i-1, 1).toLocaleString("en-US", {month:"long"});
-    mSel.appendChild(o);
-  }
-  const yearStart = now.getFullYear() - 1;
-  for (let y=yearStart; y<=yearStart+3; y++){
-    const o = document.createElement("option");
-    o.value = y; o.textContent = y; ySel.appendChild(o);
-  }
-  mSel.value = String(now.getMonth()+1);
-  ySel.value = String(now.getFullYear());
-
-  // admin key in localStorage
-  keyInput.value = localStorage.getItem("chef_admin_key") || "";
-  saveKey.onclick = () => { localStorage.setItem("chef_admin_key", keyInput.value || ""); alert("Saved."); };
-  clearKey.onclick = () => { localStorage.removeItem("chef_admin_key"); keyInput.value=""; alert("Cleared."); };
-
-  function hdrs(){
-    const h = {"Content-Type":"application/json"};
-    const k = localStorage.getItem("chef_admin_key");
-    if (k) h["x-admin-key"] = k;
-    return h;
-  }
-  async function fetchJson(url, opts){ const r = await fetch(url, opts); try{ return await r.json(); }catch{ return null; } }
-
-  function usd(c){ return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"}); }
-function dstr(ts){
-  if (!ts) return "";
-  const [y,m,d] = String(ts).slice(0,10).split("-");
-  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  return `\${months[Number(m)-1]} \${d}, \${y}`;   // <-- note the backslashes before $
-}
-
-  // ------- BOOKING LOADER -------
-  async function loadBookings(){
-    const y = ySel.value, m = mSel.value;
-    const data = await fetchJson(\`\${BASE}/__admin/list-bookings?year=\${y}&month=\${m}\`, { headers: hdrs() });
-    const wrap = document.getElementById("bookings");
-    wrap.innerHTML = "";
-    if (!Array.isArray(data) || data.length === 0){
-      const empty = document.createElement("div");
-      empty.className = "pad small";
-      empty.textContent = "No bookings this month.";
-      wrap.appendChild(empty);
-      return;
-    }
-
-    data.forEach(b => {
-      const row = document.createElement("div");
-      row.className = "rowb";
-
-      const date = document.createElement("div");
-      date.innerHTML = \`<div style="font-weight:800">\${new Date(b.start_at).toLocaleDateString("en-US",{month:"short", day:"2-digit"})}</div><div class="small">\${new Date(b.start_at).getFullYear()}</div>\`;
-
-      const cust = document.createElement("div");
-      cust.innerHTML = \`<div style="font-weight:700">\${b.customer_name || "—"}</div><div class="small">\${b.customer_email || "—"}</div>\`;
-
-      const pkg = document.createElement("div");
-      pkg.textContent = b.package_title || "—";
-
-      const guests = document.createElement("div");
-      guests.textContent = b.guests ?? "—";
-
-      const dep = document.createElement("div");
-      dep.textContent = usd(b.deposit_cents);
-
-      const status = document.createElement("div");
-      status.innerHTML = \`<span class="pill \${b.status==="confirmed"?"":"gray"}">\${b.status||"—"}</span>\`;
-
-      row.append(date, cust, pkg, guests, dep, status);
-      wrap.appendChild(row);
-
-      const meta = document.createElement("div");
-      meta.className = "meta";
-
-      const left = document.createElement("div");
-      left.innerHTML = \`
-        <div style="font-weight:800;margin-bottom:6px">Address</div>
-        <div class="small">\${[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ") || "—"}</div>
-        <div style="font-weight:800;margin:12px 0 6px">Phone</div>
-        <div class="small">\${b.phone || "—"}</div>
-        <div style="font-weight:800;margin:12px 0 6px">Diet notes</div>
-        <div class="small" style="white-space:pre-wrap">\${b.diet_notes || "—"}</div>
-        <div style="margin-top:12px;display:flex;gap:8px">
-          \${b.bartender ? '<span class="pill">Bartender</span>' : ''}
-          \${b.tablescape ? '<span class="pill">Tablescape</span>' : ''}
-        </div>
-      \`;
-
-      const right = document.createElement("div");
-      right.className = "money";
-      right.innerHTML = \`
-        <div class="small" style="font-weight:800;margin-bottom:6px">Amounts</div>
-        <div>Subtotal: \${usd(b.subtotal_cents)}</div>
-        <div>Deposit: \${usd(b.deposit_cents)}</div>
-        <div>Balance: \${usd(b.balance_cents)}</div>
-        <div class="right mt8">
-          <button class="secondary" data-hide>Hide</button>
-          <button class="danger" data-del-booking data-id="\${b.id}">Delete</button>
-        </div>
-      \`;
-
-      meta.append(left, right);
-      wrap.appendChild(meta);
-
-      right.querySelector('[data-hide]').onclick = () => { meta.style.display = meta.style.display==="none"?"grid":"none"; };
-    });
-
-    // wire delete buttons
-    wrap.querySelectorAll('[data-del-booking]').forEach(btn=>{
-      btn.onclick = async () => {
-        if (!confirm("Delete this booking? (Use for test rows only)")) return;
-        const id = btn.getAttribute("data-id");
-        const r = await fetch(\`\${BASE}/api/admin/bookings/\${id}\`, { method:"DELETE", headers: hdrs() });
-        if (r.ok) { alert("Deleted"); loadBookings(); } else { alert("Failed"); }
-      };
-    });
-  }
-
-  // ------- BLACKOUT LOADER -------
-  async function loadBlackouts(){
-    const y = ySel.value, m = mSel.value;
-    const data = await fetchJson(\`\${BASE}/__admin/list-blackouts?year=\${y}&month=\${m}\`, { headers: hdrs() });
-    const wrap = document.getElementById("blackouts");
-    wrap.innerHTML = "";
-    if (!Array.isArray(data) || data.length === 0){
-      const empty = document.createElement("div");
-      empty.className = "pad small";
-      empty.textContent = "No blackouts this month.";
-      wrap.appendChild(empty);
-      return;
-    }
-    data.forEach(d => {
-      const row = document.createElement("div");
-      row.className = "rowb";
-      row.style.gridTemplateColumns = "1fr 1fr 100px";
-      row.innerHTML = \`
-        <div>\${dstr(d.start_at)}</div>
-        <div class="small">\${(d.reason||"—")}</div>
-        <div class="right"><button class="danger" data-del data-id="\${d.id}">Delete</button></div>
-      \`;
-      wrap.appendChild(row);
-    });
-    wrap.querySelectorAll('[data-del]').forEach(btn=>{
-      btn.onclick = async () => {
-        if (!confirm("Delete this blackout date?")) return;
-        const id = btn.getAttribute("data-id");
-        const r = await fetch(\`\${BASE}/api/admin/blackouts/\${id}\`, { method:"DELETE", headers: hdrs() });
-        if (r.ok) { loadBlackouts(); } else { alert("Failed"); }
-      };
-    });
-  }
-
-  refreshBtn.onclick = () => { loadBookings(); loadBlackouts(); };
-
-  // Add blackout (single)
-  document.getElementById("bd-add").onclick = async () => {
-    const date = document.getElementById("bd-date").value;
-    const reason = document.getElementById("bd-reason").value;
-    if (!date) return alert("Pick a date");
-    const r = await fetch(\`\${BASE}/api/admin/blackouts\`, { method:"POST", headers: hdrs(), body: JSON.stringify({ date, reason }) });
-    if (r.ok) { document.getElementById("bd-date").value=""; document.getElementById("bd-reason").value=""; loadBlackouts(); }
-    else alert("Failed");
-  };
-
-  // Add blackout (bulk)
-  document.getElementById("bd-add-bulk").onclick = async () => {
-    const raw = (document.getElementById("bd-bulk").value||"").trim();
-    if (!raw) return alert("Enter comma-separated YYYY-MM-DD dates");
-    const dates = raw.split(",").map(s=>s.trim()).filter(Boolean);
-    const r = await fetch(\`\${BASE}/api/admin/blackouts/bulk\`, { method:"POST", headers: hdrs(), body: JSON.stringify({ dates }) });
-    if (r.ok) { document.getElementById("bd-bulk").value=""; loadBlackouts(); }
-    else alert("Failed");
-  };
-
-  // initial load
-  loadBookings(); loadBlackouts();
-</script>
-</body></html>`);
+  res.end(
+'<!doctype html>\
+<html lang="en">\
+<head>\
+<meta charset="utf-8"/>\
+<meta name="viewport" content="width=device-width,initial-scale=1"/>\
+<title>Chef Admin</title>\
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">\
+<style>\
+  :root{--ink:#2c3e2f;--mut:#6b7280;--bg:#f3f7f3;--panel:#fff;--line:#e5e7eb;--btn:#7B8B74;--pill:#e9f3ea;--bad:#c62828;}\
+  *{box-sizing:border-box}\
+  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}\
+  header{background:#265f2f;color:#fff;padding:14px 16px;font-weight:800}\
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}\
+  .row{display:grid;grid-template-columns:1fr 360px;gap:16px}\
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}\
+  .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}\
+  .pad{padding:12px 14px}\
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}\
+  select,input[type=\"text\"],input[type=\"date\"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}\
+  button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}\
+  button.secondary{background:#e8eee7;color:#2c3e2f;border:1px solid var(--line)}\
+  .list{display:flex;flex-direction:column}\
+  .rowb{display:grid;grid-template-columns:120px 1fr 120px 64px 110px 120px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}\
+  .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}\
+  .pill{background:var(--pill);color:#1c7a1c;padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block}\
+  .pill.gray{background:#f1f1f1;color:#555}\
+  .small{font-size:12px;color:#666}\
+  .money div{font-size:22px;font-weight:800}\
+  .right{display:flex;gap:8px;justify-content:flex-end}\
+  .flex{display:flex;gap:8px;align-items:center}\
+  .mt8{margin-top:8px}\
+  .wide{width:100%}\
+</style>\
+</head>\
+<body>\
+<header>Chef Admin</header>\
+<div class="wrap">\
+  <div class="toolbar">\
+    <label>Month</label>\
+    <select id="mSel"></select>\
+    <label>Year</label>\
+    <select id="ySel"></select>\
+    <button id="refresh">Refresh</button>\
+    <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key header)"/>\
+    <button id="saveKey" class="secondary">Save</button>\
+    <button id="clearKey" class="secondary">Clear</button>\
+  </div>\
+  <div class="row">\
+    <div class="card">\
+      <div class="head">Bookings</div>\
+      <div class="list" id="bookings"></div>\
+    </div>\
+    <div class="card">\
+      <div class="head">Blackout Dates</div>\
+      <div class="pad">\
+        <div class="flex">\
+          <input type="date" id="bd-date"/>\
+          <input type="text" id="bd-reason" placeholder="Reason (optional)" style="flex:1"/>\
+          <button id="bd-add">Add blackout</button>\
+        </div>\
+        <div class="flex mt8">\
+          <input type="text" id="bd-bulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD,…" class="wide"/>\
+          <button id="bd-add-bulk">Add bulk</button>\
+        </div>\
+      </div>\
+      <div class="list" id="blackouts"></div>\
+    </div>\
+  </div>\
+</div>\
+<script>\
+  var BASE = "";\
+  var mSel = document.getElementById("mSel");\
+  var ySel = document.getElementById("ySel");\
+  var refreshBtn = document.getElementById("refresh");\
+  var keyInput = document.getElementById("admKey");\
+  var saveKey = document.getElementById("saveKey");\
+  var clearKey = document.getElementById("clearKey");\
+  function ufmt(c){return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});}\
+  function dUTC(ts){ if(!ts) return \"\"; var s=String(ts).slice(0,10).split(\"-\"); var months=[\"Jan\",\"Feb\",\"Mar\",\"Apr\",\"May\",\"Jun\",\"Jul\",\"Aug\",\"Sep\",\"Oct\",\"Nov\",\"Dec\"]; return months[Number(s[1])-1]+\" \"+Number(s[2])+\", \"+s[0]; }\
+  async function fj(url,opts){ var r=await fetch(url,opts||{}); try{ return await r.json(); }catch(e){ return null; } }\
+  function hdrs(){ var h={\"Content-Type\":\"application/json\"}; var k=localStorage.getItem(\"chef_admin_key\"); if(k) h[\"x-admin-key\"]=k; return h; }\
+  (function initMY(){ var now=new Date(); for(var i=1;i<=12;i++){ var o=document.createElement(\"option\"); o.value=String(i); o.textContent=new Date(2025,i-1,1).toLocaleString(\"en-US\",{month:\"long\"}); mSel.appendChild(o);} var ys=now.getFullYear()-1; for(var y=ys;y<=ys+3;y++){ var o2=document.createElement(\"option\"); o2.value=String(y); o2.textContent=String(y); ySel.appendChild(o2);} mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());})();\
+  keyInput.value = localStorage.getItem(\"chef_admin_key\") || \"\";\
+  saveKey.onclick=function(){ localStorage.setItem(\"chef_admin_key\", keyInput.value || \"\"); alert(\"Saved.\"); };\
+  clearKey.onclick=function(){ localStorage.removeItem(\"chef_admin_key\"); keyInput.value=\"\"; alert(\"Cleared.\"); };\
+  async function loadBookings(){\
+    var y=ySel.value, m=mSel.value;\
+    var data=await fj(BASE+\"/__admin/list-bookings?year=\"+y+\"&month=\"+m,{headers:hdrs()});\
+    var wrap=document.getElementById(\"bookings\"); wrap.innerHTML=\"\";\
+    if(!Array.isArray(data)||data.length===0){ var emp=document.createElement(\"div\"); emp.className=\"pad small\"; emp.textContent=\"No bookings this month.\"; wrap.appendChild(emp); return; }\
+    data.forEach(function(b){\
+      var row=document.createElement(\"div\"); row.className=\"rowb\";\
+      var d=document.createElement(\"div\"); d.innerHTML='<div style=\"font-weight:800\">'+ new Date(b.start_at).toLocaleDateString(\"en-US\",{month:\"short\",day:\"2-digit\"}) +'</div><div class=\"small\">'+ new Date(b.start_at).getFullYear() +'</div>';\
+      var c=document.createElement(\"div\"); c.innerHTML='<div style=\"font-weight:700\">'+(b.customer_name||\"—\")+'</div><div class=\"small\">'+(b.customer_email||\"—\")+'</div>';\
+      var p=document.createElement(\"div\"); p.textContent=b.package_title||\"—\";\
+      var g=document.createElement(\"div\"); g.textContent=(b.guests!=null?b.guests:\"—\");\
+      var dep=document.createElement(\"div\"); dep.textContent=ufmt(b.deposit_cents);\
+      var st=document.createElement(\"div\"); st.innerHTML='<span class=\"pill '+(b.status==='confirmed'?'':'gray')+'\">'+(b.status||'—')+'</span>';\
+      row.appendChild(d); row.appendChild(c); row.appendChild(p); row.appendChild(g); row.appendChild(dep); row.appendChild(st);\
+      wrap.appendChild(row);\
+      var meta=document.createElement(\"div\"); meta.className=\"meta\";\
+      var left=document.createElement(\"div\");\
+      left.innerHTML = '<div style=\"font-weight:800;margin-bottom:6px\">Address</div>' +\
+        '<div class=\"small\">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(\", \")+'</div>' +\
+        '<div style=\"font-weight:800;margin:12px 0 6px\">Phone</div>' +\
+        '<div class=\"small\">'+(b.phone||\"—\")+'</div>' +\
+        '<div style=\"font-weight:800;margin:12px 0 6px\">Diet notes</div>' +\
+        '<div class=\"small\" style=\"white-space:pre-wrap\">'+(b.diet_notes||\"—\")+'</div>' +\
+        '<div style=\"margin-top:12px;display:flex;gap:8px\">'+(b.bartender?'<span class=\"pill\">Bartender</span>':'')+(b.tablescape?'<span class=\"pill\">Tablescape</span>':'')+'</div>';\
+      var right=document.createElement(\"div\"); right.className=\"money\";\
+      right.innerHTML = '<div class=\"small\" style=\"font-weight:800;margin-bottom:6px\">Amounts</div>' +\
+        '<div>Subtotal: '+ufmt(b.subtotal_cents)+'</div>' +\
+        '<div>Deposit: '+ufmt(b.deposit_cents)+'</div>' +\
+        '<div>Balance: '+ufmt(b.balance_cents)+'</div>' +\
+        '<div class=\"right mt8\"><button class=\"secondary\" data-hide>Hide</button><button class=\"danger\" data-del-booking data-id=\"'+b.id+'\">Delete</button></div>';\
+      meta.appendChild(left); meta.appendChild(right); wrap.appendChild(meta);\
+      right.querySelector(\"[data-hide]\").onclick=function(){ meta.style.display = (meta.style.display===\"none\"?\"grid\":\"none\"); };\
+    });\
+    wrap.querySelectorAll('[data-del-booking]').forEach(function(btn){\
+      btn.onclick = async function(){ if(!confirm(\"Delete this booking? (Use for test rows only)\")) return; var id=btn.getAttribute(\"data-id\"); var r=await fetch(BASE+\"/api/admin/bookings/\"+id,{method:\"DELETE\",headers:hdrs()}); if(r.ok){ alert(\"Deleted\"); loadBookings(); } else { alert(\"Failed\"); } };\
+    });\
+  }\
+  async function loadBlackouts(){\
+    var y=ySel.value, m=mSel.value;\
+    var data=await fj(BASE+\"/__admin/list-blackouts?year=\"+y+\"&month=\"+m,{headers:hdrs()});\
+    var wrap=document.getElementById(\"blackouts\"); wrap.innerHTML=\"\";\
+    if(!Array.isArray(data)||data.length===0){ var emp=document.createElement(\"div\"); emp.className=\"pad small\"; emp.textContent=\"No blackouts this month.\"; wrap.appendChild(emp); return; }\
+    data.forEach(function(b){\
+      var row=document.createElement(\"div\"); row.className=\"rowb\"; row.style.gridTemplateColumns=\"1fr 1fr 100px\";\
+      row.innerHTML = '<div>'+ dUTC(b.start_at) +'</div><div class=\"small\">'+ (b.reason||\"—\") +'</div><div class=\"right\"><button class=\"danger\" data-del data-id=\"'+b.id+'\">Delete</button></div>';\
+      wrap.appendChild(row);\
+    });\
+    wrap.querySelectorAll('[data-del]').forEach(function(btn){\
+      btn.onclick = async function(){ if(!confirm(\"Delete this blackout date?\")) return; var id=btn.getAttribute(\"data-id\"); var r=await fetch(BASE+\"/api/admin/blackouts/\"+id,{method:\"DELETE\",headers:hdrs()}); if(r.ok){ loadBlackouts(); } else { alert(\"Failed\"); } };\
+    });\
+  }\
+  refreshBtn.onclick=function(){ loadBookings(); loadBlackouts(); };\
+  document.getElementById(\"bd-add\").onclick = async function(){ var date=document.getElementById(\"bd-date\").value; var reason=document.getElementById(\"bd-reason\").value; if(!date) return alert(\"Pick a date\"); var r=await fetch(BASE+\"/api/admin/blackouts\",{method:\"POST\",headers:hdrs(),body:JSON.stringify({date:date,reason:reason})}); if(r.ok){ document.getElementById(\"bd-date\").value=\"\"; document.getElementById(\"bd-reason\").value=\"\"; loadBlackouts(); } else alert(\"Failed\"); };\
+  document.getElementById(\"bd-add-bulk\").onclick = async function(){ var raw=(document.getElementById(\"bd-bulk\").value||\"\").trim(); if(!raw) return alert(\"Enter comma-separated YYYY-MM-DD dates\"); var dates=raw.split(\",\").map(function(s){return s.trim();}).filter(Boolean); var r=await fetch(BASE+\"/api/admin/blackouts/bulk\",{method:\"POST\",headers:hdrs(),body:JSON.stringify({dates:dates})}); if(r.ok){ document.getElementById(\"bd-bulk\").value=\"\"; loadBlackouts(); } else alert(\"Failed\"); };\
+  loadBookings(); loadBlackouts();\
+</script>\
+</body></html>'
+  );
 });
 
 // ----------------- Success page (unchanged visuals) -----------------
