@@ -95,6 +95,17 @@ initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); 
 // ----------------- Helpers -----------------
 function fmtUSD(cents){ try { return `$${(Number(cents)/100).toFixed(2)}`; } catch { return "$0.00"; } }
 
+// STRICT UTC single-day range helper (prevents off-by-one)
+function dayRangeUtc(ymdStr){
+  // ymdStr: "YYYY-MM-DD"
+  const parts = (ymdStr || '').split('-').map(n => Number(n));
+  const [y, m, d] = parts;
+  if (!y || !m || !d) throw new Error(`Bad date string: ${ymdStr}`);
+  const startUtc = new Date(Date.UTC(y, m - 1, d, 0, 0, 0));
+  const endUtc   = new Date(Date.UTC(y, m - 1, d + 1, 0, 0, 0));
+  return { startUtc, endUtc };
+}
+
 function inAllowedZip(zip) {
   if (!/^\d{5}$/.test(String(zip))) return false;
   const z = Number(zip);
@@ -211,8 +222,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.log(`✅ Confirmed booking #${bookingId} from Stripe session ${session.id}`);
       } else if (eventDate) {
         // Fallback: create if pending booking was not created (shouldn't happen)
-        const start = new Date(`${eventDate}T00:00:00.000Z`);
-        const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+        const { startUtc: start, endUtc: end } = dayRangeUtc(eventDate);
+
         await pool.query(
           `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email, stripe_session_id)
            VALUES ($1, $2, 'confirmed', $3, $4, $5)
@@ -454,8 +465,8 @@ app.post("/api/book", async (req, res) => {
     }
 
     // 3.5) Create PENDING booking row (so we own the ID)
-    const start = new Date(`${date}T00:00:00.000Z`);
-    const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
+    console.log('[BOOK] incoming date:', date, ' -> start_at:', start.toISOString(), ' end_at:', end.toISOString());
 
     const pending = await pool.query(
       `INSERT INTO bookings
@@ -576,11 +587,9 @@ app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
 
     const starts = [], ends = [];
     for (const d of dates) {
-      const start = new Date(`${d}T00:00:00.000Z`);
-      if (isNaN(start)) return res.status(400).json({ error: `Invalid date: ${d}` });
-      const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
-      starts.push(start.toISOString());
-      ends.push(end.toISOString());
+      const { startUtc, endUtc } = dayRangeUtc(d);
+      starts.push(startUtc.toISOString());
+      ends.push(endUtc.toISOString());
     }
 
     const vals = [];
@@ -628,8 +637,7 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
-    const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
 
     const r = await pool.query(
       `INSERT INTO blackout_dates (start_at, end_at, reason)
@@ -661,8 +669,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   try {
     const { date, name, email } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
-    const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+    const { startUtc: start, endUtc: end } = dayRangeUtc(date);
 
     const r = await pool.query(
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
@@ -811,7 +818,7 @@ app.get("/admin", (_req, res) => {
 </div>
 
 <script>
-  const BASE = ${JSON.stringify(BASE)};
+  const BASE = ${JSON.stringify("")};
 
   const mSel = document.getElementById("mSel");
   const ySel = document.getElementById("ySel");
