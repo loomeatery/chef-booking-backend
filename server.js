@@ -731,7 +731,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (robust & minimal — fixes "missing )" error) -----------------
+// ----------------- Admin UI (robust UI with Delete booking) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
@@ -755,6 +755,7 @@ app.get("/admin", (_req, res) => {
   select,input[type="text"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
   button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
   button.secondary{background:#eef3ef;color:#223;border:1px solid var(--line)}
+  button.danger{background:#c62828}
   .list{display:flex;flex-direction:column}
   .rowb{display:grid;grid-template-columns:120px 1fr 120px 70px 110px 110px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
   .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
@@ -824,17 +825,11 @@ app.get("/admin", (_req, res) => {
     return h;
   }
 
-async function getJSON(path){
-  const r = await fetch(BASE + path, { headers: headers() });
-  // keep 401 as a hard auth error so the UI shows "Unauthorized"
-  if (r.status === 401) throw new Error("unauthorized");
-  // any other status: try to parse; if it fails, return [] so the UI stays usable
-  try {
-    return await r.json();
-  } catch {
-    return [];
+  async function getJSON(path){
+    const r = await fetch(BASE + path, { headers: headers() });
+    if (r.status === 401) throw new Error("unauthorized");
+    try { return await r.json(); } catch { return []; }
   }
-}
 
   // Init month/year
   (function(){
@@ -860,12 +855,23 @@ async function getJSON(path){
 
   $("refresh").addEventListener("click", ()=> loadAll());
 
+  async function deleteBooking(id){
+    if(!confirm("Delete this booking? (Use with care)")) return;
+    const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
+    if(r.status===401){ toast("Unauthorized — check your key", false); return; }
+    if(r.ok){ toast("Booking deleted ✓", true); loadBookings(); }
+    else { toast("Delete failed", false); }
+  }
+
   async function loadBookings(){
     const y=$("ySel").value, m=$("mSel").value;
     const wrap=$("bookings"); wrap.innerHTML="";
     try{
       const data = await getJSON("/__admin/list-bookings?year="+y+"&month="+m);
-      if(!Array.isArray(data)||data.length===0){ const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month."; wrap.appendChild(div); return; }
+      if(!Array.isArray(data)||data.length===0){
+        const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
+        wrap.appendChild(div); return;
+      }
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb";
         const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
@@ -886,22 +892,21 @@ async function getJSON(path){
           + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
           + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
           + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
-        const right=document.createElement("div");
-        right.innerHTML = '<div class="small" style="font-weight:800;margin-bottom:6px">Amounts</div>'
-          + '<div>Subtotal: '+usd(b.subtotal_cents)+'</div>'
-          + '<div>Deposit: '+usd(b.deposit_cents)+'</div>'
-          + '<div>Balance: '+usd(b.balance_cents)+'</div>';
+        const right=document.createElement("div"); right.className="right";
+        const delBtn=document.createElement("button"); delBtn.className="danger"; delBtn.type="button"; delBtn.textContent="Delete";
+        delBtn.addEventListener("click", ()=>deleteBooking(b.id));
+        right.appendChild(delBtn);
         meta.append(left,right);
         wrap.appendChild(meta);
       });
       toast("");
     }catch(e){
       if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh."; wrap.appendChild(div);
-        toast("Unauthorized — check your key", false);
+        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
+        wrap.appendChild(div); toast("Unauthorized — check your key", false);
       }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading bookings."; wrap.appendChild(div);
-        toast("Error loading bookings", false);
+        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading bookings.";
+        wrap.appendChild(div); toast("Error loading bookings", false);
       }
     }
   }
@@ -911,13 +916,16 @@ async function getJSON(path){
     const wrap=$("blackouts"); wrap.innerHTML="";
     try{
       const data = await getJSON("/__admin/list-blackouts?year="+y+"&month="+m);
-      if(!Array.isArray(data)||data.length===0){ const div=document.createElement("div"); div.className="empty"; div.textContent="No blackouts this month."; wrap.appendChild(div); return; }
+      if(!Array.isArray(data)||data.length===0){
+        const div=document.createElement("div"); div.className="empty"; div.textContent="No blackouts this month.";
+        wrap.appendChild(div); return;
+      }
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb"; row.style.gridTemplateColumns="1fr 1fr 100px";
         const d=document.createElement("div"); d.textContent = dUTC(b.start_at);
-        const r=document.createElement("div"); r.className="small"; r.textContent = b.reason || "—";
+        const r=document.createElement("div"); r.className="small"; r.textContent = (b.reason || "—");
         const c=document.createElement("div"); c.className="right";
-        const del=document.createElement("button"); del.type="button"; del.className="secondary"; del.textContent="Delete";
+        const del=document.createElement("button"); del.className="danger"; del.type="button"; del.textContent="Delete";
         del.addEventListener("click", async ()=>{
           if(!confirm("Delete this blackout date?")) return;
           const resp = await fetch(BASE+"/api/admin/blackouts/"+b.id,{method:"DELETE",headers:headers()});
@@ -931,15 +939,19 @@ async function getJSON(path){
       toast("");
     }catch(e){
       if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh."; wrap.appendChild(div);
-        toast("Unauthorized — check your key", false);
+        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
+        wrap.appendChild(div); toast("Unauthorized — check your key", false);
       }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading blackouts."; wrap.appendChild(div);
-        toast("Error loading blackouts", false);
+        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading blackouts.";
+        wrap.appendChild(div); toast("Error loading blackouts", false);
       }
     }
   }
 
+  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
+  loadAll();
+
+  // Add blackout actions
   $("bdAdd").addEventListener("click", async ()=>{
     const date=$("bdDate").value, reason=$("bdReason").value;
     if(!date){ toast("Pick a date", false); return; }
@@ -959,8 +971,6 @@ async function getJSON(path){
     else toast("Bulk add failed", false);
   });
 
-  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
-  loadAll();
 })();
 </script>
 </body></html>`);
