@@ -128,13 +128,13 @@
     function usd(cents){ return (Number(cents||0)/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
 
     // *** UTC-SAFE DATE FORMATTER (fixes off-by-one) ***
-function fmtDate(iso){
-    // iso looks like "2025-12-06T00:00:00.000Z"
-    if (!iso) return '';
-    const [y,m,d] = iso.slice(0,10).split('-'); // use the UTC date only
-    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-    return `${months[Number(m)-1]} ${Number(d)}, ${y}`;
-  }
+    function fmtDate(iso){
+      // iso looks like "2025-12-06T00:00:00.000Z"
+      if (!iso) return '';
+      const [y,m,d] = iso.slice(0,10).split('-'); // use UTC date only
+      const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      return `${months[Number(m)-1]} ${Number(d)}, ${y}`;
+    }
 
     function safe(s){ return (s ?? '').toString().trim(); }
 
@@ -187,13 +187,14 @@ function fmtDate(iso){
       }
 
       const rows = data.map((b,i)=>{
-        const day   = fmtDateUTC(b.start_at);  // <-- UTC-safe
+        const day   = fmtDate(b.start_at);   // <-- use UTC-sliced formatter
         const name  = safe(b.customer_name) || "—";
         const email = safe(b.customer_email) || "—";
         const pkg   = safe(b.package_title) || "—";
         const guests= b.guests ?? "—";
         const dep   = usd(b.deposit_cents);
-        const status= safe(b.status) || "—";
+        theStatus   = safe(b.status) || "—";
+        const status= theStatus;
         const addons= `${yesNoPill(b.bartender,"Bartender")}${yesNoPill(b.tablescape,"Tablescape")}`;
         const addr  = fmtAddr(b);
         const phone = safe(b.phone);
@@ -308,7 +309,7 @@ function fmtDate(iso){
         return;
       }
       const rows = data.map(b=>{
-        const day = fmtDateUTC(b.start_at); // <-- UTC-safe
+        const day = fmtDate(b.start_at);    // <-- use UTC-sliced formatter
         const reason = safe(b.reason) || "—";
         return `
           <tr>
