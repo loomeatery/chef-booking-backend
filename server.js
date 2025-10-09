@@ -872,30 +872,10 @@ app.get("/admin", (_req, res) => {
         const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
         wrap.appendChild(div); return;
       }
-
-      // Header row
-      const hdr=document.createElement("div");
-      hdr.className="rowb";
-      hdr.style.fontWeight="800";
-      hdr.style.background="#f7faf7";
-      hdr.innerHTML = `
-        <div>Date</div>
-        <div>Customer</div>
-        <div>Menu</div>
-        <div>Guests</div>
-        <div>Deposit</div>
-        <div>Status</div>
-      `;
-      wrap.appendChild(hdr);
-
-      // Rows
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb";
         const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
-        const col2=document.createElement("div"); col2.innerHTML =
-          '<div style="font-weight:700">'+(b.customer_name||"—")+'</div>'+
-          '<div class="small">'+(b.customer_email||"—")+'</div>'+
-          '<div class="small">'+(b.phone||"—")+'</div>';
+        const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
         const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
         const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
         const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
