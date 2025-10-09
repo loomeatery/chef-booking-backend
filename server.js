@@ -757,7 +757,9 @@ app.get("/admin", (_req, res) => {
   button.secondary{background:#eef3ef;color:#223;border:1px solid var(--line)}
   button.danger{background:#c62828}
   .list{display:flex;flex-direction:column}
-  .rowb{display:grid;grid-template-columns:120px 1fr 120px 70px 110px 110px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+.rowb{display:grid;grid-template-columns:120px 1fr 140px 70px 140px 110px 110px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+.rowb.hdr{background:#f6faf6;font-weight:700;border-top:none}
+.rowb.hdr .small{color:#223}
   .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .pill{background:var(--pill);color:var(--ok);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block;border:1px solid #dcefe3}
   .pill.gray{background:#f1f1f1;color:#555;border-color:#e5e7eb}
@@ -872,10 +874,27 @@ app.get("/admin", (_req, res) => {
         const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
         wrap.appendChild(div); return;
       }
+      // ---- header row ----
+const hdr = document.createElement("div");
+hdr.className = "rowb";
+hdr.style.fontWeight = "800";
+hdr.style.background = "#f7faf7";
+hdr.innerHTML = `
+  <div>Date</div>
+  <div>Customer</div>
+  <div>Menu</div>
+  <div>Guests</div>
+  <div>Deposit</div>
+  <div>Status</div>
+`;
+wrap.appendChild(hdr);
+// ---- /header row ----
+
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb";
         const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
-        const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
+        const col2 = document.createElement("div");
+col2.innerHTML ='<div style="font-weight:700">' + (b.customer_name || "—") + '</div>' +'<div class="small">' + (b.customer_email || "—") + '</div>' +'<div class="small">' + (b.phone || "—") + '</div>';
         const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
         const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
         const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
