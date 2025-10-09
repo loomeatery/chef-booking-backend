@@ -686,6 +686,51 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// ----------------- Admin list pages (JSON for admin UI) -----------------
+app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
+  try {
+    const year = Number(req.query.year), month = Number(req.query.month);
+    if (!year || !month) return res.status(200).json([]);
+    const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
+    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+    const r = await pool.query(
+      `SELECT id,start_at,end_at,reason,created_at
+         FROM blackout_dates
+        WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
+        ORDER BY start_at ASC`,
+      [start.toISOString(), end.toISOString()]
+    );
+    res.status(200).json(r.rows);
+  } catch (e) {
+    console.error("list-blackouts error:", e);
+    res.status(200).json([]); // stay green
+  }
+});
+
+app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
+  try {
+    const year = Number(req.query.year), month = Number(req.query.month);
+    if (!year || !month) return res.status(200).json([]);
+    const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
+    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+    const r = await pool.query(
+      `SELECT id,start_at,end_at,status,customer_name,customer_email,
+              package_title, guests,
+              phone, address_line1, city, state, zip, diet_notes,
+              bartender, tablescape,
+              subtotal_cents, deposit_cents, balance_cents
+         FROM bookings
+        WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
+        ORDER BY start_at ASC`,
+      [start.toISOString(), end.toISOString()]
+    );
+    res.status(200).json(r.rows);
+  } catch (e) {
+    console.error("list-bookings error:", e);
+    res.status(200).json([]); // stay green
+  }
+});
+
 // ----------------- Admin UI (robust & minimal — fixes "missing )" error) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -779,12 +824,17 @@ app.get("/admin", (_req, res) => {
     return h;
   }
 
-  async function getJSON(path){
-    const r = await fetch(BASE+path,{headers:headers()});
-    if(r.status===401) throw new Error("unauthorized");
-    if(!r.ok) throw new Error("http_"+r.status);
-    try{ return await r.json(); }catch{ return null; }
+async function getJSON(path){
+  const r = await fetch(BASE + path, { headers: headers() });
+  // keep 401 as a hard auth error so the UI shows "Unauthorized"
+  if (r.status === 401) throw new Error("unauthorized");
+  // any other status: try to parse; if it fails, return [] so the UI stays usable
+  try {
+    return await r.json();
+  } catch {
+    return [];
   }
+}
 
   // Init month/year
   (function(){
