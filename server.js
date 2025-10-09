@@ -661,7 +661,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
     const { date, name, email } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+    const end = new Date(start); end.setUTCDate(end.getUTCFullYear() + 1);
 
     const r = await pool.query(
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
@@ -729,7 +729,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (green page, UTC-safe date, no nested templates) -----------------
+// ----------------- Admin UI (green page, UTC-safe date) -----------------
 app.get("/admin", (_req, res) => {
   const BASE = ""; // same origin
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -813,6 +813,7 @@ app.get("/admin", (_req, res) => {
   var clearKey = document.getElementById("clearKey");\
   function ufmt(c){return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});}\
   function dUTC(ts){ if(!ts) return \"\"; var s=String(ts).slice(0,10).split(\"-\"); var months=[\"Jan\",\"Feb\",\"Mar\",\"Apr\",\"May\",\"Jun\",\"Jul\",\"Aug\",\"Sep\",\"Oct\",\"Nov\",\"Dec\"]; return months[Number(s[1])-1]+\" \"+Number(s[2])+\", \"+s[0]; }\
+  function dMD(ts){ if(!ts) return \"\"; var s=String(ts).slice(0,10).split(\"-\"); var months=[\"Jan\",\"Feb\",\"Mar\",\"Apr\",\"May\",\"Jun\",\"Jul\",\"Aug\",\"Sep\",\"Oct\",\"Nov\",\"Dec\"]; return months[Number(s[1])-1]+\" \"+Number(s[2]); }\
   async function fj(url,opts){ var r=await fetch(url,opts||{}); try{ return await r.json(); }catch(e){ return null; } }\
   function hdrs(){ var h={\"Content-Type\":\"application/json\"}; var k=localStorage.getItem(\"chef_admin_key\"); if(k) h[\"x-admin-key\"]=k; return h; }\
   (function initMY(){ var now=new Date(); for(var i=1;i<=12;i++){ var o=document.createElement(\"option\"); o.value=String(i); o.textContent=new Date(2025,i-1,1).toLocaleString(\"en-US\",{month:\"long\"}); mSel.appendChild(o);} var ys=now.getFullYear()-1; for(var y=ys;y<=ys+3;y++){ var o2=document.createElement(\"option\"); o2.value=String(y); o2.textContent=String(y); ySel.appendChild(o2);} mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());})();\
@@ -821,12 +822,12 @@ app.get("/admin", (_req, res) => {
   clearKey.onclick=function(){ localStorage.removeItem(\"chef_admin_key\"); keyInput.value=\"\"; alert(\"Cleared.\"); };\
   async function loadBookings(){\
     var y=ySel.value, m=mSel.value;\
-    var data=await fj(BASE+\"/__admin/list-bookings?year=\"+y+\"&month=\"+m,{headers:hdrs()});\
+    var data=await fj(BASE+\"/__admin/list-bookings?year=\"+y+\"&month=\"+m\",{headers:hdrs()});\
     var wrap=document.getElementById(\"bookings\"); wrap.innerHTML=\"\";\
     if(!Array.isArray(data)||data.length===0){ var emp=document.createElement(\"div\"); emp.className=\"pad small\"; emp.textContent=\"No bookings this month.\"; wrap.appendChild(emp); return; }\
     data.forEach(function(b){\
       var row=document.createElement(\"div\"); row.className=\"rowb\";\
-      var d = document.createElement("div");d.innerHTML ='<div style="font-weight:800">' + dstr(b.start_at) + '</div>' +'<div class="small">' + new Date(b.start_at).getUTCFullYear() + '</div>';
+      var d=document.createElement(\"div\"); d.innerHTML='<div style=\"font-weight:800\">'+ dMD(b.start_at) +'</div><div class=\"small\">'+ new Date(b.start_at).getUTCFullYear() +'</div>';\
       var c=document.createElement(\"div\"); c.innerHTML='<div style=\"font-weight:700\">'+(b.customer_name||\"—\")+'</div><div class=\"small\">'+(b.customer_email||\"—\")+'</div>';\
       var p=document.createElement(\"div\"); p.textContent=b.package_title||\"—\";\
       var g=document.createElement(\"div\"); g.textContent=(b.guests!=null?b.guests:\"—\");\
@@ -858,7 +859,7 @@ app.get("/admin", (_req, res) => {
   }\
   async function loadBlackouts(){\
     var y=ySel.value, m=mSel.value;\
-    var data=await fj(BASE+\"/__admin/list-blackouts?year=\"+y+\"&month=\"+m,{headers:hdrs()});\
+    var data=await fj(BASE+\"/__admin/list-blackouts?year=\"+y+\"&month=\"+m\",{headers:hdrs()});\
     var wrap=document.getElementById(\"blackouts\"); wrap.innerHTML=\"\";\
     if(!Array.isArray(data)||data.length===0){ var emp=document.createElement(\"div\"); emp.className=\"pad small\"; emp.textContent=\"No blackouts this month.\"; wrap.appendChild(emp); return; }\
     data.forEach(function(b){\
