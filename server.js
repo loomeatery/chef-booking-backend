@@ -729,13 +729,10 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (green page, UTC-safe date) -----------------
+// ----------------- Admin UI (robust buttons + clear auth state) -----------------
 app.get("/admin", (_req, res) => {
-  const BASE = ""; // same origin
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  // ✅ Use a template literal so inner single quotes don't break Node parsing
-  res.end(`
-<!doctype html>
+  res.end(`<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
@@ -753,7 +750,7 @@ app.get("/admin", (_req, res) => {
   .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
   .pad{padding:12px 14px}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  select,input[type="text"],input[type="date"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  select,input[type="text"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
   button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
   button.secondary{background:#e8eee7;color:#2c3e2f;border:1px solid var(--line)}
   .list{display:flex;flex-direction:column}
@@ -767,6 +764,10 @@ app.get("/admin", (_req, res) => {
   .flex{display:flex;gap:8px;align-items:center}
   .mt8{margin-top:8px}
   .wide{width:100%}
+  .toast{font-size:13px;margin-left:8px}
+  .toast.ok{color:#186a1a}
+  .toast.bad{color:#b00020}
+  .empty{padding:12px 14px;color:#6b7280}
 </style>
 </head>
 <body>
@@ -777,11 +778,14 @@ app.get("/admin", (_req, res) => {
     <select id="mSel"></select>
     <label>Year</label>
     <select id="ySel"></select>
-    <button id="refresh">Refresh</button>
+    <button id="refresh" type="button">Refresh</button>
+
     <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key header)"/>
-    <button id="saveKey" class="secondary">Save</button>
-    <button id="clearKey" class="secondary">Clear</button>
+    <button id="saveKey" type="button" class="secondary">Save</button>
+    <button id="clearKey" type="button" class="secondary">Clear</button>
+    <span id="msg" class="toast"></span>
   </div>
+
   <div class="row">
     <div class="card">
       <div class="head">Bookings</div>
@@ -793,18 +797,20 @@ app.get("/admin", (_req, res) => {
         <div class="flex">
           <input type="date" id="bd-date"/>
           <input type="text" id="bd-reason" placeholder="Reason (optional)" style="flex:1"/>
-          <button id="bd-add">Add blackout</button>
+          <button id="bd-add" type="button">Add blackout</button>
         </div>
         <div class="flex mt8">
           <input type="text" id="bd-bulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD,…" class="wide"/>
-          <button id="bd-add-bulk">Add bulk</button>
+          <button id="bd-add-bulk" type="button">Add bulk</button>
         </div>
       </div>
       <div class="list" id="blackouts"></div>
     </div>
   </div>
 </div>
+
 <script>
+(function(){
   var BASE = "";
   var mSel = document.getElementById("mSel");
   var ySel = document.getElementById("ySel");
@@ -812,107 +818,178 @@ app.get("/admin", (_req, res) => {
   var keyInput = document.getElementById("admKey");
   var saveKey = document.getElementById("saveKey");
   var clearKey = document.getElementById("clearKey");
+  var msg = document.getElementById("msg");
+
+  function toast(txt, ok){
+    msg.textContent = txt || "";
+    msg.className = "toast " + (ok === true ? "ok" : ok === false ? "bad" : "");
+  }
+
   function ufmt(c){return (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});}
-  // UTC-only renderers (avoid TZ drift)
   function dUTC(ts){ if(!ts) return ""; var s=String(ts).slice(0,10).split("-"); var months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return months[Number(s[1])-1]+" "+Number(s[2])+", "+s[0]; }
   function dMD(ts){ if(!ts) return ""; var s=String(ts).slice(0,10).split("-"); var months=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return months[Number(s[1])-1]+" "+Number(s[2]); }
-  async function fj(url,opts){ var r=await fetch(url,opts||{}); try{ return await r.json(); }catch(e){ return null; } }
-  function hdrs(){ var h={"Content-Type":"application/json"}; var k=localStorage.getItem("chef_admin_key"); if(k) h["x-admin-key"]=k; return h; }
+
+  function hdrs(){
+    var h={"Content-Type":"application/json"};
+    var k=localStorage.getItem("chef_admin_key");
+    if(k){ h["x-admin-key"]=k; }
+    return h;
+  }
+
+  async function api(path, options){
+    try{
+      const r = await fetch(BASE + path, { ...(options||{}), headers: { ...(options&&options.headers||{}), ...hdrs() } });
+      if (r.status === 401) throw new Error("unauthorized");
+      if (!r.ok) throw new Error("http_"+r.status);
+      try { return await r.json(); } catch { return null; }
+    }catch(e){
+      if (e && String(e.message).toLowerCase().includes("unauthorized")) {
+        throw e;
+      }
+      throw e;
+    }
+  }
+
   (function initMY(){
     var now=new Date();
-    for(var i=1;i<=12;i++){ var o=document.createElement("option"); o.value=String(i); o.textContent=new Date(2025,i-1,1).toLocaleString("en-US",{month:"long"}); mSel.appendChild(o);}
+    for(var i=1;i<=12;i++){
+      var o=document.createElement("option");
+      o.value=String(i);
+      o.textContent=new Date(2025,i-1,1).toLocaleString("en-US",{month:"long"});
+      mSel.appendChild(o);
+    }
     var ys=now.getFullYear()-1;
-    for(var y=ys;y<=ys+3;y++){ var o2=document.createElement("option"); o2.value=String(y); o2.textContent=String(y); ySel.appendChild(o2);}
+    for(var y=ys;y<=ys+3;y++){
+      var o2=document.createElement("option");
+      o2.value=String(y);
+      o2.textContent=String(y);
+      ySel.appendChild(o2);
+    }
     mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());
   })();
+
+  // Key UI
   keyInput.value = localStorage.getItem("chef_admin_key") || "";
-  saveKey.onclick=function(){ localStorage.setItem("chef_admin_key", keyInput.value || ""); alert("Saved."); };
-  clearKey.onclick=function(){ localStorage.removeItem("chef_admin_key"); keyInput.value=""; alert("Cleared."); };
+  saveKey.addEventListener("click", function(){
+    localStorage.setItem("chef_admin_key", keyInput.value || "");
+    toast("Key saved ✓", true);
+  });
+  clearKey.addEventListener("click", function(){
+    localStorage.removeItem("chef_admin_key");
+    keyInput.value = "";
+    toast("Key cleared", true);
+  });
+
+  refreshBtn.addEventListener("click", function(){ loadAll(); });
+
   async function loadBookings(){
     var y=ySel.value, m=mSel.value;
-    var data=await fj(BASE+"/__admin/list-bookings?year="+y+"&month="+m,{headers:hdrs()});
     var wrap=document.getElementById("bookings"); wrap.innerHTML="";
-    if(!Array.isArray(data)||data.length===0){
-      var emp=document.createElement("div"); emp.className="pad small"; emp.textContent="No bookings this month."; wrap.appendChild(emp); return;
+    try{
+      var data = await api("/__admin/list-bookings?year="+y+"&month="+m");
+      if(!Array.isArray(data)||data.length===0){
+        var emp=document.createElement("div"); emp.className="empty"; emp.textContent="No bookings this month."; wrap.appendChild(emp); return;
+      }
+      data.forEach(function(b){
+        var row=document.createElement("div"); row.className="rowb";
+        var d=document.createElement("div"); d.innerHTML='<div style="font-weight:800">'+ dMD(b.start_at) +'</div><div class="small">'+ new Date(b.start_at).getUTCFullYear() +'</div>';
+        var c=document.createElement("div"); c.innerHTML='<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
+        var p=document.createElement("div"); p.textContent=b.package_title||"—";
+        var g=document.createElement("div"); g.textContent=(b.guests!=null?b.guests:"—");
+        var dep=document.createElement("div"); dep.textContent=ufmt(b.deposit_cents);
+        var st=document.createElement("div"); st.innerHTML='<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||'—')+'</span>';
+        row.appendChild(d); row.appendChild(c); row.appendChild(p); row.appendChild(g); row.appendChild(dep); row.appendChild(st);
+        wrap.appendChild(row);
+
+        var meta=document.createElement("div"); meta.className="meta";
+        var left=document.createElement("div");
+        left.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Address</div>'
+          + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
+          + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
+          + '<div class="small">'+(b.phone||"—")+'</div>'
+          + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
+          + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
+          + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
+        var right=document.createElement("div"); right.className="money";
+        right.innerHTML = '<div class="small" style="font-weight:800;margin-bottom:6px">Amounts</div>'
+          + '<div>Subtotal: '+ufmt(b.subtotal_cents)+'</div>'
+          + '<div>Deposit: '+ufmt(b.deposit_cents)+'</div>'
+          + '<div>Balance: '+ufmt(b.balance_cents)+'</div>';
+        meta.appendChild(left); meta.appendChild(right); wrap.appendChild(meta);
+      });
+      toast("");
+    }catch(e){
+      if (String(e.message).toLowerCase()==="unauthorized"){
+        wrap.innerHTML = '<div class="empty" style="color:#b00020">Unauthorized — enter your admin key, click Save, then Refresh.</div>';
+        toast("Unauthorized — check your key", false);
+      } else {
+        wrap.innerHTML = '<div class="empty" style="color:#b00020">Error loading bookings.</div>';
+        toast("Error loading bookings", false);
+      }
     }
-    data.forEach(function(b){
-      var row=document.createElement("div"); row.className="rowb";
-      var d=document.createElement("div"); d.innerHTML='<div style="font-weight:800">'+ dMD(b.start_at) +'</div><div class="small">'+ new Date(b.start_at).getUTCFullYear() +'</div>';
-      var c=document.createElement("div"); c.innerHTML='<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
-      var p=document.createElement("div"); p.textContent=b.package_title||"—";
-      var g=document.createElement("div"); g.textContent=(b.guests!=null?b.guests:"—");
-      var dep=document.createElement("div"); dep.textContent=ufmt(b.deposit_cents);
-      var st=document.createElement("div"); st.innerHTML='<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||'—')+'</span>';
-      row.appendChild(d); row.appendChild(c); row.appendChild(p); row.appendChild(g); row.appendChild(dep); row.appendChild(st);
-      wrap.appendChild(row);
-      var meta=document.createElement("div"); meta.className="meta";
-      var left=document.createElement("div");
-      left.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Address</div>'
-        + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
-        + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
-        + '<div class="small">'+(b.phone||"—")+'</div>'
-        + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
-        + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
-        + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
-      var right=document.createElement("div"); right.className="money";
-      right.innerHTML = '<div class="small" style="font-weight:800;margin-bottom:6px">Amounts</div>'
-        + '<div>Subtotal: '+ufmt(b.subtotal_cents)+'</div>'
-        + '<div>Deposit: '+ufmt(b.deposit_cents)+'</div>'
-        + '<div>Balance: '+ufmt(b.balance_cents)+'</div>'
-        + '<div class="right mt8"><button class="secondary" data-hide>Hide</button><button class="danger" data-del-booking data-id="'+b.id+'">Delete</button></div>';
-      meta.appendChild(left); meta.appendChild(right); wrap.appendChild(meta);
-      right.querySelector("[data-hide]").onclick=function(){ meta.style.display = (meta.style.display==="none"?"grid":"none"); };
-    });
-    wrap.querySelectorAll('[data-del-booking]').forEach(function(btn){
-      btn.onclick = async function(){
-        if(!confirm("Delete this booking? (Use for test rows only)")) return;
-        var id=btn.getAttribute("data-id");
-        var r=await fetch(BASE+"/api/admin/bookings/"+id,{method:"DELETE",headers:hdrs()});
-        if(r.ok){ alert("Deleted"); loadBookings(); } else { alert("Failed"); }
-      };
-    });
   }
+
   async function loadBlackouts(){
     var y=ySel.value, m=mSel.value;
-    var data=await fj(BASE+"/__admin/list-blackouts?year="+y+"&month="+m",{headers:hdrs()});
     var wrap=document.getElementById("blackouts"); wrap.innerHTML="";
-    if(!Array.isArray(data)||data.length===0){
-      var emp=document.createElement("div"); emp.className="pad small"; emp.textContent="No blackouts this month."; wrap.appendChild(emp); return;
+    try{
+      var data = await api("/__admin/list-blackouts?year="+y+"&month="+m");
+      if(!Array.isArray(data)||data.length===0){
+        var emp=document.createElement("div"); emp.className="empty"; emp.textContent="No blackouts this month."; wrap.appendChild(emp); return;
+      }
+      data.forEach(function(b){
+        var row=document.createElement("div"); row.className="rowb"; row.style.gridTemplateColumns="1fr 1fr 100px";
+        row.innerHTML = '<div>'+ dUTC(b.start_at) +'</div><div class="small">'+ (b.reason||"—") +'</div><div class="right"><button class="secondary" data-del data-id="'+b.id+'" type="button">Delete</button></div>';
+        wrap.appendChild(row);
+      });
+      wrap.querySelectorAll('[data-del]').forEach(function(btn){
+        btn.addEventListener("click", async function(){
+          if(!confirm("Delete this blackout date?")) return;
+          var id=btn.getAttribute("data-id");
+          const r = await fetch(BASE+"/api/admin/blackouts/"+id,{method:"DELETE",headers:hdrs()});
+          if(r.status===401){ toast("Unauthorized — check your key", false); return; }
+          if(r.ok){ loadBlackouts(); } else { toast("Delete failed", false); }
+        });
+      });
+      toast("");
+    }catch(e){
+      if (String(e.message).toLowerCase()==="unauthorized"){
+        wrap.innerHTML = '<div class="empty" style="color:#b00020">Unauthorized — enter your admin key, click Save, then Refresh.</div>';
+        toast("Unauthorized — check your key", false);
+      } else {
+        wrap.innerHTML = '<div class="empty" style="color:#b00020">Error loading blackouts.</div>';
+        toast("Error loading blackouts", false);
+      }
     }
-    data.forEach(function(b){
-      var row=document.createElement("div"); row.className="rowb"; row.style.gridTemplateColumns="1fr 1fr 100px";
-      row.innerHTML = '<div>'+ dUTC(b.start_at) +'</div><div class="small">'+ (b.reason||"—") +'</div><div class="right"><button class="danger" data-del data-id="'+b.id+'">Delete</button></div>';
-      wrap.appendChild(row);
-    });
-    wrap.querySelectorAll('[data-del]').forEach(function(btn){
-      btn.onclick = async function(){
-        if(!confirm("Delete this blackout date?")) return;
-        var id=btn.getAttribute("data-id");
-        var r=await fj(BASE+"/api/admin/blackouts/"+id,{method:"DELETE",headers:hdrs()});
-        if(r && r.ok===false){ alert("Failed"); } else { loadBlackouts(); }
-      };
-    });
   }
-  refreshBtn.onclick=function(){ loadBookings(); loadBlackouts(); };
-  document.getElementById("bd-add").onclick = async function(){
+
+  document.getElementById("bd-add").addEventListener("click", async function(){
     var date=document.getElementById("bd-date").value;
     var reason=document.getElementById("bd-reason").value;
-    if(!date) return alert("Pick a date");
-    var r=await fetch(BASE+"/api/admin/blackouts",{method:"POST",headers:hdrs(),body:JSON.stringify({date:date,reason:reason})});
-    if(r.ok){ document.getElementById("bd-date").value=""; document.getElementById("bd-reason").value=""; loadBlackouts(); } else alert("Failed");
-  };
-  document.getElementById("bd-add-bulk").onclick = async function(){
+    if(!date) return toast("Pick a date", false);
+    const r = await fetch(BASE+"/api/admin/blackouts",{method:"POST",headers:hdrs(),body:JSON.stringify({date:date,reason:reason})});
+    if(r.status===401) return toast("Unauthorized — check your key", false);
+    if(r.ok){ document.getElementById("bd-date").value=""; document.getElementById("bd-reason").value=""; loadBlackouts(); toast("Blackout added ✓", true); }
+    else toast("Add failed", false);
+  });
+
+  document.getElementById("bd-add-bulk").addEventListener("click", async function(){
     var raw=(document.getElementById("bd-bulk").value||"").trim();
-    if(!raw) return alert("Enter comma-separated YYYY-MM-DD dates");
+    if(!raw) return toast("Enter comma-separated YYYY-MM-DD dates", false);
     var dates=raw.split(",").map(function(s){return s.trim();}).filter(Boolean);
-    var r=await fetch(BASE+"/api/admin/blackouts/bulk",{method:"POST",headers:hdrs(),body:JSON.stringify({dates:dates})});
-    if(r.ok){ document.getElementById("bd-bulk").value=""; loadBlackouts(); } else alert("Failed");
-  };
-  loadBookings(); loadBlackouts();
+    const r = await fetch(BASE+"/api/admin/blackouts/bulk",{method:"POST",headers:hdrs(),body:JSON.stringify({dates:dates})});
+    if(r.status===401) return toast("Unauthorized — check your key", false);
+    if(r.ok){ document.getElementById("bd-bulk").value=""; loadBlackouts(); toast("Bulk added ✓", true); }
+    else toast("Bulk add failed", false);
+  });
+
+  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
+  loadAll();
+})();
 </script>
-</body></html>
-  `);
+</body></html>`);
 });
+
 
 // ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
