@@ -126,7 +126,15 @@
       try{ return await r.json(); }catch{ return null; }
     }
     function usd(cents){ return (Number(cents||0)/100).toLocaleString('en-US',{style:'currency',currency:'USD'}); }
-    function fmtDate(iso){ if(!iso) return ''; const d=new Date(iso); return d.toLocaleDateString('en-US',{year:'numeric',month:'short',day:'numeric'}); }
+
+    // *** UTC-SAFE DATE FORMATTER (fixes off-by-one) ***
+    function fmtDateUTC(iso){
+      if(!iso) return '';
+      return new Intl.DateTimeFormat('en-US',{
+        year:'numeric', month:'short', day:'numeric', timeZone:'UTC'
+      }).format(new Date(iso));
+    }
+
     function safe(s){ return (s ?? '').toString().trim(); }
 
     // ===== TOP BAR KEY =====
@@ -178,7 +186,7 @@
       }
 
       const rows = data.map((b,i)=>{
-        const day   = fmtDate(b.start_at);
+        const day   = fmtDateUTC(b.start_at);  // <-- UTC-safe
         const name  = safe(b.customer_name) || "—";
         const email = safe(b.customer_email) || "—";
         const pkg   = safe(b.package_title) || "—";
@@ -299,7 +307,7 @@
         return;
       }
       const rows = data.map(b=>{
-        const day = fmtDate(b.start_at);
+        const day = fmtDateUTC(b.start_at); // <-- UTC-safe
         const reason = safe(b.reason) || "—";
         return `
           <tr>
@@ -349,7 +357,6 @@
       const raw = document.getElementById('boBulk').value.trim();
       if(!raw){ alert("Enter dates like 2025-10-12,2025-10-13"); return; }
       const dates = raw.split(',').map(s=>s.trim()).filter(Boolean);
-      if(dates.length===0){ alert("No dates parsed"); return; }
       const reason = document.getElementById('boReason').value.trim();
       const r = await fetch(`${BASE}/api/admin/blackouts/bulk`,{
         method:"POST",
