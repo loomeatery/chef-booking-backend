@@ -129,9 +129,8 @@
 
     // *** UTC-SAFE DATE FORMATTER (fixes off-by-one) ***
     function fmtDate(iso){
-      // iso looks like "2025-12-06T00:00:00.000Z"
       if (!iso) return '';
-      const [y,m,d] = iso.slice(0,10).split('-'); // use UTC date only
+      const [y,m,d] = String(iso).slice(0,10).split('-'); // use UTC date only
       const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
       return `${months[Number(m)-1]} ${Number(d)}, ${y}`;
     }
@@ -187,14 +186,13 @@
       }
 
       const rows = data.map((b,i)=>{
-        const day   = fmtDate(b.start_at);   // <-- use UTC-sliced formatter
+        const day   = fmtDate(b.start_at);   // UTC-sliced formatter
         const name  = safe(b.customer_name) || "—";
         const email = safe(b.customer_email) || "—";
         const pkg   = safe(b.package_title) || "—";
         const guests= b.guests ?? "—";
         const dep   = usd(b.deposit_cents);
-        theStatus   = safe(b.status) || "—";
-        const status= theStatus;
+        const status= safe(b.status) || "—";
         const addons= `${yesNoPill(b.bartender,"Bartender")}${yesNoPill(b.tablescape,"Tablescape")}`;
         const addr  = fmtAddr(b);
         const phone = safe(b.phone);
@@ -309,7 +307,7 @@
         return;
       }
       const rows = data.map(b=>{
-        const day = fmtDate(b.start_at);    // <-- use UTC-sliced formatter
+        const day = fmtDate(b.start_at);    // UTC-sliced formatter
         const reason = safe(b.reason) || "—";
         return `
           <tr>
@@ -337,6 +335,10 @@
         };
       });
     }
+
+    async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
+    // initial
+    loadAll();
 
     // Add blackout
     document.getElementById('boAdd').onclick = async () => {
@@ -369,10 +371,6 @@
       document.getElementById('boBulk').value="";
       loadBlackouts();
     };
-
-    async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
-    // initial
-    loadAll();
   </script>
 </body>
 </html>
