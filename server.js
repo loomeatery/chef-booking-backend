@@ -112,6 +112,18 @@ function shortCodeFromSessionId(sessionId = '') {
   return (sessionId || '').replace(/[^a-zA-Z0-9]/g,'').slice(-8).toUpperCase();
 }
 
+// ---- Access code helpers ----
+function parseCodes() {
+  const raw = (process.env.MIN_OVERRIDE_CODES || "").trim();
+  if (!raw) return [];
+  return raw.split(",").map(s => s.trim()).filter(Boolean).map(s => s.toUpperCase());
+}
+function codeOK(code) {
+  if (!code) return false;
+  const set = parseCodes();
+  return set.includes(String(code).trim().toUpperCase());
+}
+
 // ----------------- Email helper (Resend) -----------------
 async function sendEmail({ to, subject, html }) {
   try {
@@ -289,6 +301,16 @@ app.use(express.json());
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
+// ----------------- Access code validation (for frontend badge) -----------------
+app.get("/api/validate-code", (req, res) => {
+  try {
+    const code = (req.query.code || "").toString();
+    return res.json({ ok: codeOK(code) });
+  } catch {
+    return res.json({ ok: false });
+  }
+});
+
 // ----------------- Availability (reads DB) -----------------
 app.get("/api/availability", async (req, res) => {
   try {
@@ -377,6 +399,7 @@ app.post("/api/quote", (req, res) => {
       tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
+      dinner2:  { perPerson: 250, depositPct: 0.30 }, // added for completeness
     };
     const sel = PKG[req.body?.pkg] || PKG.tasting;
 
@@ -406,12 +429,14 @@ app.post("/api/book", async (req, res) => {
     const date  = b.date;                    // "YYYY-MM-DD"
     const time  = b.time || "18:00";
     const email = b.email;
+    const accessCode = (b.accessCode || "").toString().trim();
 
     const packageId   = b.packageId || b.pkg || "tasting";
     const packageName = b.packageName || ({
       tasting:  "Tasting Menu",
       family:   "Family-Style Dinner",
-      cocktail: "Cocktail & Canapés"
+      cocktail: "Cocktail & Canapés",
+      dinner2:  "Dinner for 2 (Wed/Thu only)"
     }[packageId] || "Private Event");
 
     const guests = Number(b.guests || 0);
@@ -428,11 +453,30 @@ app.post("/api/book", async (req, res) => {
       });
     }
 
+    // 2.6) Package rules
+    // Tasting menu min: 6 normally, 4 if access code valid
+    if (packageId === "tasting") {
+      const min = codeOK(accessCode) ? 4 : 6;
+      if (guests < min) {
+        return res.status(400).json({ error: `Tasting Menu requires a minimum of ${min} guests${codeOK(accessCode) ? " with your access code" : ""}.` });
+      }
+    }
+    // Dinner for 2: exactly 2 guests; only Wed/Thu
+    if (packageId === "dinner2") {
+      if (guests !== 2) return res.status(400).json({ error: "Dinner for 2 requires exactly 2 guests." });
+      const d = new Date(`${date}T00:00:00`);
+      const dow = d.getDay(); // 0 Sun ... 6 Sat
+      if (!(dow === 3 || dow === 4)) {
+        return res.status(400).json({ error: "Dinner for 2 can only be booked on Wednesday or Thursday." });
+      }
+    }
+
     // 3) Pricing (per-person + upsells)
     const PKG = {
       tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
+      dinner2:  { perPerson: 250, depositPct: 0.30 }, // ✅ ensure correct Stripe amount
     };
     const perPerson  = Number(b.perPerson ?? PKG[packageId]?.perPerson ?? 215);
     const depositPct = Number(b.depositPct ?? PKG[packageId]?.depositPct ?? 0.30);
@@ -537,7 +581,8 @@ app.post("/api/book", async (req, res) => {
         deposit_cents:         String(depositCents),
         balance_cents:         String(balanceCents),
         ack_kitchen_lead_time: b.ackKitchenLeadTime ? "yes" : "no",
-        agreed_to_terms:       b.agreedToTerms ? "yes" : "no"
+        agreed_to_terms:       b.agreedToTerms ? "yes" : "no",
+        access_code:           accessCode || ""   // ✅ keep for audit
       },
 
       payment_intent_data: {
