@@ -830,7 +830,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (robust UI with Delete booking) -----------------
+// ----------------- Admin UI (robust UI with Delete booking + Pop-Up Events seats) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
@@ -838,7 +838,7 @@ app.get("/admin", (_req, res) => {
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Chef Admin</title>
+<title>Private Chef Christopher LaMagna Database</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   :root{--ink:#203227;--mut:#6b7280;--bg:#f3f7f3;--panel:#fff;--line:#e5e7eb;--btn:#2f6f4f;--pill:#e9f5ee;--bad:#c62828;--ok:#1b5e20}
@@ -865,10 +865,16 @@ app.get("/admin", (_req, res) => {
   .empty{padding:12px 14px;color:#6b7280}
   #toast{font-size:13px;margin-left:8px}
   .ok{color:var(--ok)} .bad{color:var(--bad)}
+
+  /* Pop-Up Events rows */
+  .evtrow{display:grid;grid-template-columns:1.4fr 140px 210px 1fr;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--line)}
+  .badge{display:inline-block;background:var(--pill);border:1px solid #dcefe3;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--ok)}
+  .btns{display:flex;gap:8px;align-items:center}
+  input.spin{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
 </style>
 </head>
 <body>
-<header>Chef Admin</header>
+<header>Private Chef Christopher LaMagna Database</header>
 <div class="wrap">
   <div class="toolbar">
     <label>Month</label>
@@ -902,6 +908,17 @@ app.get("/admin", (_req, res) => {
         </div>
       </div>
       <div class="list" id="blackouts"></div>
+    </div>
+  </div>
+
+  <!-- Pop-Up Events Card -->
+  <div class="card" style="margin-top:16px">
+    <div class="head">Pop-Up Events (Seats)</div>
+    <div class="pad">
+      <div class="small" style="color:#666;margin-bottom:8px">
+        Adjust seats when you add/remove a guest manually or issue a refund. Changes reflect on the site immediately.
+      </div>
+      <div class="list" id="events"></div>
     </div>
   </div>
 </div>
@@ -1047,7 +1064,80 @@ app.get("/admin", (_req, res) => {
     }
   }
 
-  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); }
+  // ---------- Pop-Up Events Admin ----------
+  async function adjustSold(eventId, delta){
+    try{
+      const r = await fetch("/api/admin/events/"+encodeURIComponent(eventId)+"/adjust-sold", {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({ delta: Number(delta) })
+      });
+      if (r.status === 401) { toast("Unauthorized — check your key", false); return; }
+      if (!r.ok) { toast("Seat adjust failed", false); return; }
+      await r.json();
+      toast("Seats updated ✓", true);
+      loadEventsAdmin();
+    }catch(e){
+      toast("Seat adjust error", false);
+    }
+  }
+
+  async function loadEventsAdmin(){
+    const wrap = $("events");
+    if (!wrap) return;
+    wrap.innerHTML = "";
+    try{
+      const list = await (await fetch("/api/events")).json();
+      if (!Array.isArray(list) || list.length === 0) {
+        const div = document.createElement("div");
+        div.className = "empty";
+        div.textContent = "No visible pop-up events.";
+        wrap.appendChild(div);
+        return;
+      }
+      list.forEach(ev=>{
+        const row = document.createElement("div");
+        row.className = "evtrow";
+
+        // Title + date/location
+        const c1 = document.createElement("div");
+        const d = (ev.dateISO||"").slice(0,10);
+        c1.innerHTML = \`<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
+                        <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>\`;
+
+        // Seats
+        const c2 = document.createElement("div");
+        const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
+        c2.innerHTML = \`<span class="badge">Sold \${sold} / \${cap}</span>\`;
+
+        // Quick –1 / +1
+        const c3 = document.createElement("div"); c3.className = "btns";
+        const minus = document.createElement("button"); minus.className = "secondary"; minus.textContent = "–1";
+        const plus  = document.createElement("button"); plus.className  = "secondary"; plus.textContent  = "+1";
+        minus.addEventListener("click", ()=> adjustSold(ev.id, -1));
+        plus.addEventListener("click",  ()=> adjustSold(ev.id, +1));
+        c3.append(minus, plus);
+
+        // Custom delta
+        const c4 = document.createElement("div"); c4.className = "btns";
+        const inp = document.createElement("input"); inp.className="spin"; inp.type="number"; inp.value="1";
+        inp.min="-10"; inp.max="10"; inp.step="1";
+        const apply = document.createElement("button"); apply.className="secondary"; apply.textContent="Apply ±";
+        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value || 0)));
+        c4.append(inp, apply);
+
+        row.append(c1,c2,c3,c4);
+        wrap.appendChild(row);
+      });
+    }catch(e){
+      const div = document.createElement("div");
+      div.className = "empty"; div.style.color="var(--bad)";
+      div.textContent = "Error loading events.";
+      wrap.appendChild(div);
+    }
+  }
+
+  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); }
   loadAll();
 
   // Add blackout actions
@@ -1074,7 +1164,6 @@ app.get("/admin", (_req, res) => {
 </script>
 </body></html>`);
 });
-
 
 // ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
