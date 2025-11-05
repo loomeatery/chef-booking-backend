@@ -1065,6 +1065,113 @@ app.get("/booking-success", async (req, res) => {
 </body></html>`);
 });
 
+
+
+// ======================================================
+// =============== POP-UP EVENTS MODULE ==================
+// ======================================================
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const eventsFile = path.join(__dirname, "events.json");
+
+function loadEvents() {
+  try {
+    const raw = fs.readFileSync(eventsFile, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+function saveEvents(events) {
+  fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
+}
+
+// --------- API: Get All Events (for frontend display)
+app.get("/api/events", async (req, res) => {
+  try {
+    const events = loadEvents();
+    res.json(events.filter(e => e.visible !== false));
+  } catch (err) {
+    console.error("Error loading events:", err);
+    res.status(500).json({ error: "Unable to load events." });
+  }
+});
+
+// --------- API: Create Stripe Checkout for a specific event
+app.post("/api/events/:id/book", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const events = loadEvents();
+    const event = events.find(e => e.id === id);
+    if (!event) return res.status(404).json({ error: "Event not found." });
+    if (event.sold >= event.capacity)
+      return res.status(400).json({ error: "Event is sold out." });
+
+    const qty = Math.min(Number(req.body.quantity || 1), event.capacity - event.sold);
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        {
+          price: event.stripe_price_id,
+          quantity: qty,
+        },
+      ],
+      success_url: `${process.env.SITE_URL}/popup-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_URL}/popup#cancel`,
+      metadata: {
+        event_id: id,
+        quantity: qty.toString(),
+      },
+    });
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Error creating event checkout:", err);
+    res.status(500).json({ error: "Unable to create checkout session." });
+  }
+});
+
+// --------- STRIPE WEBHOOK (Pop-Up Tickets)
+app.post("/api/stripe/events-webhook", express.raw({ type: "application/json" }), async (req, res) => {
+  try {
+    const sig = req.headers["stripe-signature"];
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+      console.error("⚠️ Webhook signature failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const md = session.metadata || {};
+      if (md.event_id) {
+        const events = loadEvents();
+        const ev = events.find(e => e.id === md.event_id);
+        if (ev) {
+          ev.sold = Math.min((ev.sold || 0) + Number(md.quantity || 1), ev.capacity);
+          saveEvents(events);
+          console.log(`✅ Updated event "${ev.title}" sold count → ${ev.sold}/${ev.capacity}`);
+        }
+      }
+    }
+
+    res.json({ received: true });
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.status(500).send("Server error");
+  }
+});
+// ======================================================
+// =============== END POP-UP EVENTS MODULE ==============
+// ======================================================
+
+
 // ----------------- Start server -----------------
 app.listen(port, () => {
   console.log(`Chef booking server listening on ${port}`);
