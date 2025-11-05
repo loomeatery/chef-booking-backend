@@ -178,7 +178,25 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const bookingId = md.booking_id ? Number(md.booking_id) : null;
       const eventDate = md.event_date; // "YYYY-MM-DD"
 
-      // Try to fetch receipt URL + deposit amount
+      // --- NEW: pull buyer/contact info from Checkout (works for pop-up flow too)
+      const cd       = session.customer_details || {};
+      const fullName = (cd.name || `${md.first_name || ""} ${md.last_name || ""}`).trim();
+      const phone    = cd.phone || md.phone || "";
+      const addr     = cd.address || {};
+      const address1 = addr.line1 || md.address_line1 || "";
+      const city     = addr.city  || md.city || "";
+      const state    = (addr.state || md.state || "").toString();
+      const zip      = (addr.postal_code || md.zip || "").toString();
+
+      // Custom fields collected on Checkout (dietary, guest names, referral)
+      const cfs = Array.isArray(session.custom_fields) ? session.custom_fields : [];
+      const cf  = (key) => cfs.find(f => f.key === key)?.text?.value || "";
+      const dietary  = cf("dietary");
+      const guestsNm = cf("guest_names");
+      const referral = cf("referral");
+      const combinedNotes = [dietary, referral, guestsNm].filter(Boolean).join(" • ");
+
+      // Try to fetch receipt URL + paid amount
       let receiptUrl = "";
       let depositText = "Deposit received";
       try {
@@ -193,7 +211,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       }
 
       if (bookingId) {
-        // ✅ Backfill and confirm
+        // ✅ Backfill and confirm (keeps your calendar flow intact)
         await pool.query(
           `UPDATE bookings
              SET status='confirmed',
@@ -210,43 +228,48 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           [
             bookingId,
             session.id,
-            `${md.first_name || ""} ${md.last_name || ""}`.trim(),
-            session.customer_details?.email || md.email || "",
-            md.phone || "",
-            md.address_line1 || "",
-            md.city || "",
-            md.state || "",
-            md.zip || "",
-            md.diet_notes || ""
+            fullName || "—",
+            (cd.email || md.email || ""),
+            phone,
+            address1,
+            city,
+            state,
+            zip,
+            combinedNotes || md.diet_notes || ""
           ]
         );
         console.log(`✅ Confirmed booking #${bookingId} from Stripe session ${session.id}`);
       } else if (eventDate) {
-        // Fallback: create if no pending existed (rare)
+        // Fallback: create if no pending existed (pop-up flow)
         const start = new Date(`${eventDate}T00:00:00.000Z`);
         const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
         await pool.query(
-          `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email, stripe_session_id)
-           VALUES ($1, $2, 'confirmed', $3, $4, $5)
+          `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email,
+                                 phone, address_line1, city, state, zip, diet_notes, stripe_session_id)
+           VALUES ($1, $2, 'confirmed', $3, $4, $5, $6, $7, $8, $9, $10, $11)
            ON CONFLICT (stripe_session_id)
            DO UPDATE SET status='confirmed'`,
           [
             start.toISOString(),
             end.toISOString(),
-            `${md.first_name || ""} ${md.last_name || ""}`.trim(),
-            session.customer_details?.email || md.email || "",
+            fullName || "—",
+            (cd.email || md.email || ""),
+            phone,
+            address1,
+            city,
+            state,
+            zip,
+            combinedNotes,
             session.id
           ]
         );
         console.log(`✅ Auto-booked ${eventDate} from Stripe session ${session.id}`);
       }
 
-      // 🔥 NEW: POP-UP EVENT SEAT UPDATE (idempotent)
-      // If this Checkout came from /api/events/:id/book (metadata.event_id is set),
-      // increment the event's `sold` count by the paid quantity, but ONLY once per session.id.
+      // 🔥 POP-UP EVENT SEAT UPDATE (idempotent)
       try {
         if (md.event_id) {
-          const events = loadEvents();        // defined below in the Pop-up module
+          const events = loadEvents();
           const idx = events.findIndex(e => e.id === md.event_id);
           if (idx !== -1) {
             const qty = Math.max(1, Number(md.quantity || 1));
@@ -256,7 +279,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
               events[idx].sold = prev + qty;
               sessions.push(session.id);
               events[idx].sessions = sessions;
-              saveEvents(events);             // persist to events.json
+              saveEvents(events);
               console.log(`🎟️ Pop-up '${events[idx].title || md.event_id}' — sold +${qty} (now ${events[idx].sold}) [session ${session.id}]`);
             } else {
               console.log(`↩️ Pop-up seat update skipped (duplicate webhook) [session ${session.id}]`);
@@ -269,9 +292,9 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.error("❌ Pop-up seat update failed:", e);
       }
 
-      // ------ Send confirmation email (guest + admin copy) ------
-      const guestEmail = session.customer_details?.email || md.email || "";
-      const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
+      // ------ Send confirmation email (guest + admin copy)
+      const guestEmail = cd.email || md.email || "";
+      const safeName   = fullName || "Guest";
       const pkgTitle   = md.package_title || md.package || (md.event_title || "Private Event");
       const guests     = md.guests || md.quantity || "";
       const startTime  = md.start_time || "18:00";
@@ -286,7 +309,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
           ${logoBlock}
           <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
-          <p>Hi ${fullName},</p>
+          <p>Hi ${safeName},</p>
           <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date || ""}</strong>${bookingId ? ` at <strong>${startTime}</strong>` : ""}${guests ? ` for <strong>${guests}</strong> ${md.event_id ? "seat(s)" : "guests"}` : ""}.</p>
           <p>We’ve received your ${md.event_id ? "payment" : "deposit"}: <strong>${depositText}</strong>.</p>
 
@@ -323,8 +346,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     res.status(500).send("Server error");
   }
 });
-
 // ----------------- Normal middleware (after webhook) -----------------
+
 app.use(cors());
 app.use(express.json());
 
@@ -1096,8 +1119,6 @@ app.get("/booking-success", async (req, res) => {
 </body></html>`);
 });
 
-
-
 // ======================================================
 // =============== POP-UP EVENTS MODULE ==================
 // ======================================================
@@ -1106,7 +1127,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 const eventsFile = path.join(__dirname, "events.json");
 
 function loadEvents() {
@@ -1122,7 +1143,7 @@ function saveEvents(events) {
 }
 
 // --------- API: Get All Events (for frontend display)
-app.get("/api/events", async (req, res) => {
+app.get("/api/events", async (_req, res) => {
   try {
     const events = loadEvents();
     res.json(events.filter(e => e.visible !== false));
@@ -1139,8 +1160,9 @@ app.post("/api/events/:id/book", async (req, res) => {
     const events = loadEvents();
     const ev = events.find(e => e.id === id);
     if (!ev) return res.status(404).json({ error: "Event not found." });
-    if (ev.sold >= ev.capacity)
+    if (ev.sold >= ev.capacity) {
       return res.status(400).json({ error: "Event is sold out." });
+    }
 
     const qty = Math.min(Number(req.body.quantity || 1), ev.capacity - ev.sold);
 
@@ -1151,53 +1173,53 @@ app.post("/api/events/:id/book", async (req, res) => {
       billing_address_collection: "auto",
       allow_promotion_codes: true,
 
-      // 👇 Stripe will charge for exactly the quantity chosen on your site
+      // Stripe will charge for exactly the quantity chosen on your site
       line_items: [{
-  quantity: qty,
-  price_data: {
-    currency: "usd",
-    unit_amount: Number(ev.price || 11500),  // cents
-    product_data: {
-      name: ev.title || "Pop-Up Class",
-      description: `${(ev.dateISO || "").slice(0,10)} • ${ev.location || "Brooklyn, NY"}`
-    }
-  }
-}],
+        quantity: qty,
+        price_data: {
+          currency: "usd",
+          unit_amount: Number(ev.price || 11500), // cents
+          product_data: {
+            name: ev.title || "Pop-Up Class",
+            description: `${(ev.dateISO || "").slice(0,10)} • ${ev.location || "Brooklyn, NY"}`
+          }
+        }
+      }],
 
-      // 👇 after payment, send them to your success page
+      // After payment, send them to your success page
       success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.SITE_URL}/popup#cancel`,
+      cancel_url:  `${process.env.SITE_URL}/popup#cancel`,
 
-      // 👇 custom questions that will appear on Checkout
+      // Custom questions that will appear on Checkout
       custom_fields: [
-  {
-    key: "dietary",
-    label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
-    type: "text",
-    text: { maximum_length: 255 },
-    optional: true
-  },
-  {
-    key: "guest_names",
-    label: { type: "custom", custom: "Guests Name(s)" },
-    type: "text",
-    text: { maximum_length: 255 },
-    optional: true
-  },
-  {
-    key: "referral",
-    label: { type: "custom", custom: "How Did You Hear About Us?" },
-    type: "text",
-    text: { maximum_length: 200 },  // already OK
-    optional: true
-  }
-],
+        {
+          key: "dietary",
+          label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
+          type: "text",
+          text: { maximum_length: 255 },
+          optional: true
+        },
+        {
+          key: "guest_names",
+          label: { type: "custom", custom: "Guests Name(s)" },
+          type: "text",
+          text: { maximum_length: 255 },
+          optional: true
+        },
+        {
+          key: "referral",
+          label: { type: "custom", custom: "How Did You Hear About Us?" },
+          type: "text",
+          text: { maximum_length: 200 },
+          optional: true
+        }
+      ],
 
-      // 👇 this is used by the webhook to log into Admin
+      // Used by the webhook to record and reconcile
       metadata: {
         event_id: id,
         quantity: String(qty),
-        event_date: (ev.dateISO || "").slice(0, 10),  // "YYYY-MM-DD"
+        event_date: (ev.dateISO || "").slice(0, 10), // "YYYY-MM-DD"
         event_title: ev.title || "Pop-Up Class",
         event_price_cents: String(ev.price || 0)
       }
@@ -1207,6 +1229,34 @@ app.post("/api/events/:id/book", async (req, res) => {
   } catch (err) {
     console.error("Error creating event checkout:", err);
     res.status(500).json({ error: "Unable to create checkout session." });
+  }
+});
+
+// --------- API: Admin — adjust sold seats (+/-)
+// Use with x-admin-key header. Example to add one seat back:
+// curl -X POST https://<your-host>/api/admin/events/brooklyn-nov14/adjust-sold \
+//   -H 'Content-Type: application/json' -H 'x-admin-key: ULTRACHRIS2022' -d '{"delta":1}'
+app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
+  try {
+    const { id } = req.params;
+    const delta   = Number(req.body?.delta || 0);
+    if (!Number.isFinite(delta) || delta === 0) {
+      return res.status(400).json({ error: "Provide non-zero numeric 'delta'." });
+    }
+    const events = loadEvents();
+    const ev = events.find(e => e.id === id);
+    if (!ev) return res.status(404).json({ error: "Event not found." });
+
+    const cap  = Number(ev.capacity || 0);
+    const oldS = Number(ev.sold || 0);
+    const next = Math.max(0, Math.min(cap, oldS + delta));
+    ev.sold = next;
+    saveEvents(events);
+
+    res.json({ ok: true, sold: ev.sold, capacity: cap });
+  } catch (e) {
+    console.error("adjust-sold error:", e);
+    res.status(500).json({ error: "Unable to adjust seats." });
   }
 });
 
