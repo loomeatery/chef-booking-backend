@@ -1,0 +1,14 @@
+[
+  {
+    "id": "brooklyn-nov14",
+    "title": "Brooklyn Pop-Up Pasta Class",
+    "dateISO": "2025-11-14T18:30:00-05:00",
+    "capacity": 12,
+    "sold": 0,
+    "price": 11500,
+    "stripe_price_id": "price_1SPrnA04Vq2ayErvaaorNB4q",
+    "location": "Brooklyn, NY",
+    "visible": true,
+    "attendees": []
+  }
+]
