@@ -1169,28 +1169,28 @@ app.post("/api/events/:id/book", async (req, res) => {
 
       // 👇 custom questions that will appear on Checkout
       custom_fields: [
-        {
-          key: "dietary",
-          label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
-          type: "text",
-          text: { maximum_length: 300 },
-          optional: true
-        },
-        {
-          key: "guest_names",
-          label: { type: "custom", custom: "Guests Name(s)" },
-          type: "text",
-          text: { maximum_length: 300 },
-          optional: true
-        },
-        {
-          key: "referral",
-          label: { type: "custom", custom: "How Did You Hear About Us?" },
-          type: "text",
-          text: { maximum_length: 200 },
-          optional: true
-        }
-      ],
+  {
+    key: "dietary",
+    label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
+    type: "text",
+    text: { maximum_length: 255 },
+    optional: true
+  },
+  {
+    key: "guest_names",
+    label: { type: "custom", custom: "Guests Name(s)" },
+    type: "text",
+    text: { maximum_length: 255 },
+    optional: true
+  },
+  {
+    key: "referral",
+    label: { type: "custom", custom: "How Did You Hear About Us?" },
+    type: "text",
+    text: { maximum_length: 200 },  // already OK
+    optional: true
+  }
+],
 
       // 👇 this is used by the webhook to log into Admin
       metadata: {
