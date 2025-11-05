@@ -241,11 +241,39 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.log(`✅ Auto-booked ${eventDate} from Stripe session ${session.id}`);
       }
 
+      // 🔥 NEW: POP-UP EVENT SEAT UPDATE (idempotent)
+      // If this Checkout came from /api/events/:id/book (metadata.event_id is set),
+      // increment the event's `sold` count by the paid quantity, but ONLY once per session.id.
+      try {
+        if (md.event_id) {
+          const events = loadEvents();        // defined below in the Pop-up module
+          const idx = events.findIndex(e => e.id === md.event_id);
+          if (idx !== -1) {
+            const qty = Math.max(1, Number(md.quantity || 1));
+            const sessions = Array.isArray(events[idx].sessions) ? events[idx].sessions : [];
+            if (!sessions.includes(session.id)) {
+              const prev = Number(events[idx].sold || 0);
+              events[idx].sold = prev + qty;
+              sessions.push(session.id);
+              events[idx].sessions = sessions;
+              saveEvents(events);             // persist to events.json
+              console.log(`🎟️ Pop-up '${events[idx].title || md.event_id}' — sold +${qty} (now ${events[idx].sold}) [session ${session.id}]`);
+            } else {
+              console.log(`↩️ Pop-up seat update skipped (duplicate webhook) [session ${session.id}]`);
+            }
+          } else {
+            console.warn(`⚠️ Pop-up event not found for id='${md.event_id}'`);
+          }
+        }
+      } catch (e) {
+        console.error("❌ Pop-up seat update failed:", e);
+      }
+
       // ------ Send confirmation email (guest + admin copy) ------
       const guestEmail = session.customer_details?.email || md.email || "";
       const fullName   = `${md.first_name || ""} ${md.last_name || ""}`.trim() || "Guest";
-      const pkgTitle   = md.package_title || md.package || "Private Event";
-      const guests     = md.guests || "";
+      const pkgTitle   = md.package_title || md.package || (md.event_title || "Private Event");
+      const guests     = md.guests || md.quantity || "";
       const startTime  = md.start_time || "18:00";
       const confCode   = shortCodeFromSessionId(session.id);
       const logoUrl    = process.env.EMAIL_LOGO_URL || "";
@@ -259,8 +287,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           ${logoBlock}
           <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
           <p>Hi ${fullName},</p>
-          <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date || ""}</strong> at <strong>${startTime}</strong> for <strong>${guests}</strong> guests.</p>
-          <p>We’ve received your deposit: <strong>${depositText}</strong>.</p>
+          <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date || ""}</strong>${bookingId ? ` at <strong>${startTime}</strong>` : ""}${guests ? ` for <strong>${guests}</strong> ${md.event_id ? "seat(s)" : "guests"}` : ""}.</p>
+          <p>We’ve received your ${md.event_id ? "payment" : "deposit"}: <strong>${depositText}</strong>.</p>
 
           <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
             <div style="font-size:13px;color:#555">Confirmation code</div>
@@ -270,7 +298,10 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
 
           <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
-          <p>I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>.</p>
+          <p>${md.event_id
+            ? "We’ll email final class details and what to bring. Questions? Reply here anytime."
+            : "I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>."
+          }</p>
 
           <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
           <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
