@@ -1151,7 +1151,17 @@ app.post("/api/events/:id/book", async (req, res) => {
       billing_address_collection: "auto",
 
       // 👇 Stripe will charge for exactly the quantity chosen on your site
-      line_items: [{ price: ev.stripe_price_id, quantity: qty }],
+      line_items: [{
+  quantity: qty,
+  price_data: {
+    currency: "usd",
+    unit_amount: Number(ev.price || 11500),  // cents
+    product_data: {
+      name: ev.title || "Pop-Up Class",
+      description: `${(ev.dateISO || "").slice(0,10)} • ${ev.location || "Brooklyn, NY"}`
+    }
+  }
+}],
 
       // 👇 after payment, send them to your success page
       success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
