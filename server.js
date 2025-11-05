@@ -1149,6 +1149,7 @@ app.post("/api/events/:id/book", async (req, res) => {
       payment_method_types: ["card"],
       phone_number_collection: { enabled: true },
       billing_address_collection: "auto",
+      allow_promotion_codes: true,
 
       // 👇 Stripe will charge for exactly the quantity chosen on your site
       line_items: [{
