@@ -1106,28 +1106,61 @@ app.post("/api/events/:id/book", async (req, res) => {
   try {
     const { id } = req.params;
     const events = loadEvents();
-    const event = events.find(e => e.id === id);
-    if (!event) return res.status(404).json({ error: "Event not found." });
-    if (event.sold >= event.capacity)
+    const ev = events.find(e => e.id === id);
+    if (!ev) return res.status(404).json({ error: "Event not found." });
+    if (ev.sold >= ev.capacity)
       return res.status(400).json({ error: "Event is sold out." });
 
-    const qty = Math.min(Number(req.body.quantity || 1), event.capacity - event.sold);
+    const qty = Math.min(Number(req.body.quantity || 1), ev.capacity - ev.sold);
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       payment_method_types: ["card"],
-      line_items: [
-        {
-          price: event.stripe_price_id,
-          quantity: qty,
-        },
-      ],
-      success_url: `${process.env.SITE_URL}/popup-success?session_id={CHECKOUT_SESSION_ID}`,
+      phone_number_collection: { enabled: true },
+      billing_address_collection: "auto",
+
+      // 👇 Stripe will charge for exactly the quantity chosen on your site
+      line_items: [{ price: ev.stripe_price_id, quantity: qty }],
+
+      // 👇 after payment, send them to your success page
+      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${process.env.SITE_URL}/popup#cancel`,
+
+      // 👇 custom questions that will appear on Checkout
+      custom_fields: [
+        {
+          key: "dietary",
+          label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
+          type: "text",
+          text: { maximum_length: 300 },
+          optional: true
+        },
+        {
+          key: "guest_names",
+          label: { type: "custom", custom: "Guests Name(s)" },
+          type: "text",
+          text: { maximum_length: 300 },
+          optional: true
+        },
+        {
+          key: "referral",
+          label: { type: "custom", custom: "How Did You Hear About Us?" },
+          type: "text",
+          text: { maximum_length: 200 },
+          optional: true
+        }
+      ],
+
+      // 👇 this is used by the webhook to log into Admin
       metadata: {
         event_id: id,
-        quantity: qty.toString(),
-      },
+        quantity: String(qty),
+        event_date: (ev.dateISO || "").slice(0, 10),  // "YYYY-MM-DD"
+        event_title: ev.title || "Pop-Up Class",
+        event_price_cents: String(ev.price || 0)
+      }
     });
+
     res.json({ url: session.url });
   } catch (err) {
     console.error("Error creating event checkout:", err);
@@ -1135,38 +1168,6 @@ app.post("/api/events/:id/book", async (req, res) => {
   }
 });
 
-// --------- STRIPE WEBHOOK (Pop-Up Tickets)
-app.post("/api/stripe/events-webhook", express.raw({ type: "application/json" }), async (req, res) => {
-  try {
-    const sig = req.headers["stripe-signature"];
-    let event;
-    try {
-      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
-    } catch (err) {
-      console.error("⚠️ Webhook signature failed:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      const md = session.metadata || {};
-      if (md.event_id) {
-        const events = loadEvents();
-        const ev = events.find(e => e.id === md.event_id);
-        if (ev) {
-          ev.sold = Math.min((ev.sold || 0) + Number(md.quantity || 1), ev.capacity);
-          saveEvents(events);
-          console.log(`✅ Updated event "${ev.title}" sold count → ${ev.sold}/${ev.capacity}`);
-        }
-      }
-    }
-
-    res.json({ received: true });
-  } catch (err) {
-    console.error("Webhook error:", err);
-    res.status(500).send("Server error");
-  }
-});
 // ======================================================
 // =============== END POP-UP EVENTS MODULE ==============
 // ======================================================
