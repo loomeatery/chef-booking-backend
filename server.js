@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL & BULLETPROOF (DATES + DEPOSIT FIXED) --------------------
+// -------------------- ADMIN UI — FINAL WITH FULL BLACKOUT MANAGER --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(
@@ -1001,13 +1001,16 @@ app.get("/admin", (_req, res) => {
       "body{font-family:system-ui,sans-serif;background:#f9fafb;color:#111;margin:0;padding:20px}" +
       "h1{background:#1b5e20;color:white;padding:16px 20px;margin:-20px -20px 20px;border-radius:8px 8px 0 0}" +
       ".toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px;background:white;padding:16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}" +
-      "input[type=password],select,button{padding:10px 14px;border-radius:6px;border:1px solid #ccc;font-size:14px}" +
+      "input[type=password],select,button,textarea{padding:10px 14px;border-radius:6px;border:1px solid #ccc;font-size:14px}" +
       "button{background:#1b5e20;color:white;border:none;cursor:pointer;font-weight:600}" +
-      "button:hover{background:#16611a}button.clear{background:#666}" +
+      "button:hover{background:#16611a}button.clear{background:#666}button.danger{background:#c62828}" +
       ".card{background:white;padding:20px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.1);position:relative;border-left:5px solid #1b5e20}" +
       ".delete{position:absolute;top:12px;right:12px;background:#c62828;color:white;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer}" +
       ".status{padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600}" +
       ".confirmed{background:#d9f7e3;color:#1b5e20}.pending{background:#fff3cd;color:#856404}" +
+      ".flex{display:flex;gap:30px;flex-wrap:wrap}" +
+      ".col{flex:1;min-width:300px}" +
+      ".blackout-tools{background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}" +
     "</style></head><body>" +
     "<h1>Private Chef Christopher LaMagna Database</h1>" +
     "<div class='toolbar'>" +
@@ -1017,9 +1020,26 @@ app.get("/admin", (_req, res) => {
       "<select id='month'></select><select id='year'></select>" +
       "<button id='refresh'>Refresh</button>" +
     "</div>" +
-    "<div id='content' style='display:none'>" +
-      "<h2>Bookings</h2><div id='bookings'>Loading…</div>" +
-      "<h2>Gift Cards</h2><div id='giftcards'>Loading…</div>" +
+    "<div class='flex'>" +
+      "<div class='col'>" +
+        "<h2>Bookings</h2><div id='bookings'>Loading…</div>" +
+        "<h2 style='margin-top:40px'>Gift Cards</h2><div id='giftcards'>Loading…</div>" +
+      "</div>" +
+      "<div class='col'>" +
+        "<div class='blackout-tools'>" +
+          "<h2>Blackout Dates</h2>" +
+          "<div style='margin-bottom:12px'>" +
+            "<input type='date' id='singleDate'>" +
+            "<input type='text' id='reason' placeholder='Reason (optional)' style='width:180px'>" +
+            "<button id='addSingle'>Add blackout</button>" +
+          "</div>" +
+          "<div style='margin-bottom:12px'>" +
+            "<textarea id='bulkDates' rows='5' placeholder='Bulk add (one date per line or comma-separated):&#10;2026-12-24&#10;2026-12-25&#10;2026-12-26' style='width:100%'></textarea><br>" +
+            "<button id='addBulk' style='margin-top:8px'>Add bulk blackouts</button>" +
+          "</div>" +
+          "<div id='blackouts'>Loading…</div>" +
+        "</div>" +
+      "</div>" +
     "</div>" +
     "<script>" +
       "const saved=localStorage.getItem('adminkey')||'';if(saved)document.getElementById('key').value=saved;" +
@@ -1028,11 +1048,12 @@ app.get("/admin", (_req, res) => {
       "const now=new Date();for(let m=1;m<=12;m++){const o=document.createElement('option');o.value=m;o.textContent=new Date(2025,m-1,1).toLocaleString('en-US',{month:'long'});if(m===now.getMonth()+1)o.selected=true;document.getElementById('month').appendChild(o)}" +
       "for(let y=2024;y<=2028;y++){const o=document.createElement('option');o.value=o.textContent=y;if(y===now.getFullYear())o.selected=true;document.getElementById('year').appendChild(o)}" +
       "document.getElementById('refresh').onclick=load;" +
-      "async function load(){const key=localStorage.getItem('adminkey');if(!key)return alert('Enter admin key first');document.getElementById('content').style.display='block';const h={'x-admin-key':key};" +
+      "async function load(){const key=localStorage.getItem('adminkey');if(!key)return alert('Enter admin key first');const h={'x-admin-key':key};" +
       "const p=new URLSearchParams({month:document.getElementById('month').value,year:document.getElementById('year').value});" +
+      // Bookings
       "const bl=await fetch('/__admin/list-bookings?'+p,{headers:h});const bookings=await bl.json();" +
       "let html='';bookings.forEach(b=>{" +
-        "const d=new Date(b.start_at);d.setMinutes(d.getMinutes() + d.getTimezoneOffset());" + // ← FIXED: correct date in NY time
+        "const d=new Date(b.start_at);d.setMinutes(d.getMinutes()+d.getTimezoneOffset());" +
         "const dateStr=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
         "const timeStr=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});" +
         "const addr=[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(', ');" +
@@ -1044,13 +1065,26 @@ app.get("/admin", (_req, res) => {
         "<b>Address:</b> ${addr||'—'}<br><b>Diet notes:</b> ${b.diet_notes||'None'}<br><br>" +
         "<b>Deposit paid: $${deposit.toFixed(2)}</b></div>`;" +
       "});document.getElementById('bookings').innerHTML=html||'<i>No bookings this month.</i>';" +
+      // Gift cards
       "const gl=await fetch('/api/admin/giftcards',{headers:h});const gifts=await gl.json();" +
       "let ghtml='';gifts.forEach(g=>{" +
         "const d=new Date(g.created_at);const ds=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-        "ghtml+=`<div class='card'><button class='delete' onclick='if(confirm(\\'Delete gift card?\\'))fetch(\\'/api/admin/giftcards/${g.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Delete</button>" +
-        "<b>${ds}</b><br>Amount: $${(g.amount_cents/100).toFixed(2)}<br>Recipient: ${g.recipient_name||'—'} (${g.recipient_email||'—'})<br>" +
-        "Buyer: ${g.buyer_name||'—'} (${g.buyer_email||'—'})<br>Message: ${g.message||'—'}<br>Deliver on: ${g.deliver_on||'—'}</div>`;" +
-      "});document.getElementById('giftcards').innerHTML=ghtml||'<i>No gift cards yet.</i>';}" +
+        "ghtml+=`<div class='card'><button class='delete' onclick='if(confirm(\\'Delete gift card?\\'))fetch(\\'/api/admin/giftcards/${g.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Delete</button><b>${ds}</b> — $${(g.amount_cents/100).toFixed(2)}</div>`;" +
+      "});document.getElementById('giftcards').innerHTML=ghtml||'<i>No gift cards yet.</i>';" +
+      // Blackouts
+      "const blk=await fetch('/__admin/list-blackouts?'+p,{headers:h});const blackouts=await blk.json();" +
+      "let bhtml='';blackouts.forEach(bo=>{" +
+        "const bd=new Date(bo.start_at);bd.setMinutes(bd.getMinutes()+bd.getTimezoneOffset());" +
+        "const bs=bd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
+        "bhtml+=`<div style='padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center'>" +
+        "<span><strong>${bs}</strong> ${bo.reason?'— '+bo.reason:''}</span>" +
+        "<button class='danger' style='padding:4px 8px;font-size:12px' onclick='if(confirm(\\'Remove blackout for ${bs}?\\'))fetch(\\'/api/admin/blackouts/${bo.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Remove</button></div>`;" +
+      "});document.getElementById('blackouts').innerHTML=bhtml||'<i>No blackouts this month.</i>';" +
+      "}" +
+      // Add single blackout
+      "document.getElementById('addSingle').onclick=async()=>{const key=localStorage.getItem('adminkey');const date=document.getElementById('singleDate').value;const reason=document.getElementById('reason').value;if(!date)return alert('Pick a date');await fetch('/api/admin/blackouts',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({date,reason})});load();};" +
+      // Add bulk blackouts
+      "document.getElementById('addBulk').onclick=async()=>{const key=localStorage.getItem('adminkey');const raw=document.getElementById('bulkDates').value.trim();if(!raw)return alert('Enter dates');const dates=raw.split(/[,\\n]+/).map(s=>s.trim()).filter(Boolean);await fetch('/api/admin/blackouts/bulk',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({dates})});document.getElementById('bulkDates').value='';load();};" +
       "if(localStorage.getItem('adminkey'))load();" +
     "</script></body></html>"
   );
