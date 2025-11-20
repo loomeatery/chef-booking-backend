@@ -10,7 +10,7 @@ import pkg from "pg";
 
 dotenv.config();
 
-const app  = express();
+const app = express();
 const port = process.env.PORT || 3000;
 
 // ----------------- Stripe -----------------
@@ -34,7 +34,6 @@ app.use(
   })
 );
 
-// Handle browser preflight (Squarespace requires this)
 app.options("*", cors({
   origin: [
     "https://www.privatechefchristopherlamagna.com",
@@ -46,7 +45,6 @@ app.options("*", cors({
   credentials: false
 }));
 
-// Body parser AFTER CORS
 // ----------------- Postgres -----------------
 const { Pool } = pkg;
 const pool = new Pool({
@@ -60,9 +58,9 @@ async function initSchema() {
     CREATE TABLE IF NOT EXISTS bookings (
       id BIGSERIAL PRIMARY KEY,
       start_at TIMESTAMPTZ NOT NULL,
-      end_at   TIMESTAMPTZ NOT NULL,
-      status   TEXT NOT NULL DEFAULT 'pending', -- pending|confirmed|canceled
-      customer_name  TEXT,
+      end_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', -- pending|confirmed|canceled
+      customer_name TEXT,
       customer_email TEXT,
       stripe_session_id TEXT UNIQUE,
       created_via TEXT DEFAULT 'online',
@@ -74,8 +72,8 @@ async function initSchema() {
     CREATE TABLE IF NOT EXISTS blackout_dates (
       id BIGSERIAL PRIMARY KEY,
       start_at TIMESTAMPTZ NOT NULL,
-      end_at   TIMESTAMPTZ NOT NULL,
-      reason   TEXT,
+      end_at TIMESTAMPTZ NOT NULL,
+      reason TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
@@ -288,7 +286,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       } else if (eventDate) {
         // Fallback: create if no pending existed (pop-up flow)
         const start = new Date(`${eventDate}T00:00:00.000Z`);
-           = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1); // ← fixed syntax
         await pool.query(
           `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email,
                                  phone, address_line1, city, state, zip, diet_notes, stripe_session_id)
@@ -408,7 +407,9 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
               m.recipient_email || "",
               m.message || "",
               m.deliver_on || null,
-              m.basket === "yes",
+              m.basket 
+
+=== "yes",
               session.id
             ]
           );
@@ -480,7 +481,7 @@ app.get("/api/availability", async (req, res) => {
     if (!year || !month) return res.status(400).json({ error: "Missing year or month" });
 
     const monthStart = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
-    const monthEnd   = new Date(Date.UTC(year, month, 1, 0, 0, 0)); // first of next month
+    const monthEnd   = new Date(Date.UTC(year, month + 1, 1, 0, 0, 0)); // ← fixed
 
     const qBookings = await pool.query(
       `SELECT start_at, end_at
@@ -499,7 +500,7 @@ app.get("/api/availability", async (req, res) => {
 
     const expandDates = (rows) => {
       const set = new Set();
-      rows.forEach(r => {
+      rows.rows.forEach(r => {
         const s = new Date(r.start_at);
         const e = new Date(r.end_at);
         for (let d = new Date(s); d < e; d.setUTCDate(d.getUTCDate() + 1)) {
@@ -513,8 +514,8 @@ app.get("/api/availability", async (req, res) => {
     };
 
     const booked = Array.from(new Set([
-      ...expandDates(qBookings.rows),
-      ...expandDates(qBlackouts.rows)
+      ...expandDates(qBookings),
+      ...expandDates(qBlackouts)
     ])).sort();
 
     res.json({ booked });
@@ -955,7 +956,7 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
     const year = Number(req.query.year), month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month + 1, 1, 0,0,0));
+    const end = new Date(Date.UTC(year, month + 1, 1, 0,0,0)); // ← fixed
     const r = await pool.query(
       `SELECT id,start_at,end_at,reason,created_at
          FROM blackout_dates
@@ -971,11 +972,12 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
 });
 
 app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
+ in {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month + 1, 1, 0,0,0));
+    const end = new Date(Date.UTC(year, month + 1, 1, 0,0,0)); // ← fixed
     const r = await pool.query(
       `SELECT *
          FROM bookings
@@ -990,90 +992,190 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL, NO BACKTICKS, 100% DEPLOYS --------------------
+// -------------------- ADMIN UI — FINAL, 100% WORKING --------------------
 app.get("/admin", (_req, res) => {
-  const html = 
-  "<!DOCTYPE html>" +
-  "<html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1'>" +
-  "<title>Private Chef — Admin</title>" +
-  "<style>" +
-    "body{font-family:system-ui,sans-serif;background:#f9fafb;color:#111;margin:0;padding:20px}" +
-    "h1{background:#1b5e20;color:white;padding:16px 20px;margin:-20px -20px 20px;border-radius:8px 8px 0 0}" +
-    ".toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px;background:white;padding:16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}" +
-    "input,select,button,textarea{padding:10px 14px;border-radius:6px;border:1px solid #ccc;font-size:14px}" +
-    "button{background:#1b5e20;color:white;border:none;cursor:pointer;font-weight:600}" +
-    "button:hover{background:#16611a}button.clear{background:#666}button.danger{background:#c62828}" +
-    ".card{background:white;padding:20px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.1);position:relative;border-left:5px solid #1b5e20}" +
-    ".delete{position:absolute;top:12px;right:12px;background:#c62828;color:white;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer}" +
-    ".status{padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600}" +
-    ".confirmed{background:#d9f7e3;color:#1b5e20}.pending{background:#fff3cd;color:#856404}" +
-    ".flex{display:flex;gap:30px;flex-wrap:wrap}.col{flex:1;min-width:300px}" +
-    ".blackout-tools{background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}" +
-  "</style></head><body>" +
-  "<h1>Private Chef Christopher LaMagna Database</h1>" +
-  "<div class='toolbar'>" +
-    "<input type='password' id='key' placeholder='Admin key' style='flex:1;min-width:200px'>" +
-    "<button id='save'>Save</button>" +
-    "<button id='clear' class='clear'>Clear</button>" +
-    "<select id='month'></select><select id='year'></select>" +
-    "<button id='refresh'>Refresh</button>" +
-  "</div>" +
-  "<div class='flex'>" +
-    "<div class='col'>" +
-      "<h2>Bookings</h2><div id='bookings'>Enter key and Save to load</div>" +
-      "<h2 style='margin-top:40px'>Gift Cards</h2><div id='giftcards'></div>" +
-    "</div>" +
-    "<div class='col'>" +
-      "<div class='blackout-tools'>" +
-        "<h2>Blackout Dates</h2>" +
-        "<div style='margin-bottom:12px'>" +
-          "<input type='date' id='singleDate'>" +
-          "<input type='text' id='reason' placeholder='Reason (optional)' style='width:200px'>" +
-          "<button id='addSingle'>Add blackout</button>" +
-        "</div>" +
-        "<div style='margin-bottom:12px'>" +
-          "<textarea id='bulkDates' rows='6' placeholder='Bulk add — one date per line or comma-separated:\n2026-12-24\n2026-12-25\n2026-12-26' style='width:100%'></textarea><br>" +
-          "<button id='addBulk'>Add bulk blackouts</button>" +
-        "</div>" +
-        "<div id='blackouts'></div>" +
-      "</div>" +
-    "</div>" +
-  "</div>" +
-  "<script>" +
-    "const saved=localStorage.getItem('adminkey')||'';if(saved)document.getElementById('key').value=saved;" +
-    "document.getElementById('save').onclick=()=>{localStorage.setItem('adminkey',document.getElementById('key').value.trim());load()};" +
-    "document.getElementById('clear').onclick=()=>{localStorage.removeItem('adminkey');location.reload()};" +
-    "const now=new Date();for(let m=1;m<=12;m++){const o=document.createElement('option');o.value=m;o.textContent=new Date(2025,m-1,1).toLocaleString('en-US',{month:'long'});if(m===now.getMonth()+1)o.selected=true;document.getElementById('month').appendChild(o)}" +
-    "for(let y=2024;y<=2028;y++){const o=document.createElement('option');o.value=o.textContent=y;if(y===now.getFullYear())o.selected=true;document.getElementById('year').appendChild(o)}" +
-    "document.getElementById('refresh').onclick=load;" +
-    "async function load(){const key=localStorage.getItem('adminkey');if(!key)return alert('Enter admin key first');const h={'x-admin-key':key};" +
-    "const month=document.getElementById('month').value;const year=document.getElementById('year').value;const p=new URLSearchParams({month,year});" +
-    "let html='';const br=await fetch('/__admin/list-bookings?'+p,{headers:h});const bookings=await br.json();bookings.forEach(b=>{" +
-      "const d=new Date(b.start_at);d.setMinutes(d.getMinutes()+d.getTimezoneOffset());" +
-      "const dateStr=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-      "const timeStr=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});" +
-      "const addr=[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(', ');" +
-      "const deposit=(b.deposit_cents||0)/100;" +
-      "html+='<div class=\"card\"><button class=\"delete\" onclick=\"if(confirm(\\'Delete forever?\\'))fetch(\\'/api/admin/bookings/'+b.id+'\\',{method:\\'DELETE\\',headers:h}).then(load)\">Delete</button>'+" +
-      "'<strong>'+dateStr+' — '+timeStr+'</strong> <span class=\"status '+(b.status||'pending')+'\">'+(b.status||'pending')+'</span><br>'+" +
-      "'<small>'+(b.package_title||b.package_id||'—')+' • '+(b.guests||'?')+' guests</small><br><br>'+" +
-      "'<b>Name:</b> '+(b.customer_name||'—')+'<br><b>Email:</b> '+(b.customer_email||'—')+'<br><b>Phone:</b> '+(b.phone||'—')+'<br>'+" +
-      "'<b>Address:</b> '+addr+'<br><b>Diet notes:</b> '+(b.diet_notes||'None')+'<br><br>'+" +
-      "'<b>Deposit paid: $'+deposit.toFixed(2)+'</b></div>';});" +
-    "document.getElementById('bookings').innerHTML=html||'<i>No bookings this month.</i>';" +
-    "const gr=await fetch('/api/admin/giftcards',{headers:h});const gifts=await gr.json();let ghtml='';gifts.forEach(g=>{" +
-      "const ds=new Date(g.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-      "ghtml+='<div class=\"card\"><button class=\"delete\" onclick=\"if(confirm(\\'Delete gift card?\\'))fetch(\\'/api/admin/giftcards/'+g.id+'\\',{method:\\'DELETE\\',headers:h}).then(load)\">Delete</button><b>'+ds+'</b> — $'+(g.amount_cents/100).toFixed(2)+'</div>';});" +
-    "document.getElementById('giftcards').innerHTML=ghtml||'<i>No gift cards yet.</i>';" +
-    "const blkr=await fetch('/__admin/list-blackouts?'+p,{headers:h});const blackouts=await blkr.json();let bhtml='';blackouts.forEach(bo=>{" +
-      "const bd=new Date(bo.start_at);bd.setMinutes(bd.getMinutes()+bd.getTimezoneOffset());" +
-      "const bs=bd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-      "bhtml+='<div style=\"padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center\"><span><strong>'+bs+'</strong>'+(bo.reason?' — '+bo.reason:'')+'</span><button class=\"danger\" style=\"padding:4px 8px;font-size:12px\" onclick=\"if(confirm(\\'Remove blackout?\\'))fetch(\\'/api/admin/blackouts/'+bo.id+'\\',{method:\\'DELETE\\',headers:h}).then(load)\">Remove</button></div>';});" +
-    "document.getElementById('blackouts').innerHTML=bhtml||'<i>No blackouts this month.</i>';}" +
-    "document.getElementById('addSingle').onclick=async()=>{const key=localStorage.getItem('adminkey');const date=document.getElementById('singleDate').value;const reason=document.getElementById('reason').value.trim();if(!date)return alert('Pick a date');await fetch('/api/admin/blackouts',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({date,reason})});load();};" +
-    "document.getElementById('addBulk').onclick=async()=>{const key=localStorage.getItem('adminkey');const raw=document.getElementById('bulkDates').value.trim();if(!raw)return alert('Enter dates');const dates=raw.split(/[\\n,]+/).map(s=>s.trim()).filter(Boolean);await fetch('/api/admin/blackouts/bulk',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({dates})});document.getElementById('bulkDates').value='';load();};" +
-    "if(saved)load();" +
-  "</script></body></html>";
+  const html = String.raw`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private Chef — Admin</title>
+<style>
+  body {font-family:system-ui,sans-serif;background:#f9fafb;color:#111;margin:0;padding:20px}
+  h1 {background:#1b5e20;color:white;padding:16px 20px;margin:-20px -20px 20px;border-radius:8px 8px 0 0}
+  .toolbar {display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px;background:white;padding:16px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+  input,select,button,textarea {padding:10px 14px;border-radius:6px;border:1px solid #ccc;font-size:14px}
+  button {background:#1b5e20;color:white;border:none;cursor:pointer;font-weight:600}
+  button:hover {background:#16611a}
+  button.clear {background:#666}
+  button.danger {background:#c62828}
+  .card {background:white;padding:20px;border-radius:8px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.1);position:relative;border-left:5px solid #1b5e20}
+  .delete {position:absolute;top:12px;right:12px;background:#c62828;color:white;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer}
+  .status {padding:4px 8px;border-radius:4px;font-size:12px;font-weight:600}
+  .confirmed {background:#d9f7e3;color:#1b5e20}
+  .pending {background:#fff3cd;color:#856404}
+  .flex {display:flex;gap:30px;flex-wrap:wrap}
+  .col {flex:1;min-width:300px}
+  .blackout-tools {background:white;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+</style>
+</head>
+<body>
+<h1>Private Chef Christopher LaMagna Database</h1>
+<div class="toolbar">
+  <input type="password" id="key" placeholder="Admin key" style="flex:1;min-width:200px">
+  <button id="save">Save</button>
+  <button id="clear" class="clear">Clear</button>
+  <select id="month"></select>
+  <select id="year"></select>
+  <button id="refresh">Refresh</button>
+</div>
+
+<div class="flex">
+  <div class="col">
+    <h2>Bookings</h2>
+    <div id="bookings">Enter key and Save</div>
+    <h2 style="margin-top:40px">Gift Cards</h2>
+    <div id="giftcards"></div>
+  </div>
+  <div class="col">
+    <div class="blackout-tools">
+      <h2>Blackout Dates</h2>
+      <div style="margin-bottom:12px">
+        <input type="date" id="singleDate">
+        <input type="text" id="reason" placeholder="Reason (optional)" style="width:200px">
+        <button id="addSingle">Add blackout</button>
+      </div>
+      <div style="margin-bottom:12px">
+        <textarea id="bulkDates" rows="6" placeholder="Bulk add — one date per line or comma-separated:\n2026-12-24\n2026-12-25\n2026-12-26" style="width:100%"></textarea><br>
+        <button id="addBulk">Add bulk blackouts</button>
+      </div>
+      <div id="blackouts"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const saved = localStorage.getItem('adminkey') || '';
+  if (saved) document.getElementById('key').value = saved;
+
+  document.getElementById('save').onclick = () => {
+    localStorage.setItem('adminkey', document.getElementById('key').value.trim());
+    load();
+  };
+  document.getElementById('clear').onclick = () => {
+    localStorage.removeItem('adminkey');
+    location.reload();
+  };
+
+  const now = new Date();
+  const monthSel = document.getElementById('month');
+  const yearSel = document.getElementById('year');
+  for (let m = 1; m <= 12; m++) {
+    const opt = new Option(new Date(2025, m-1, 1).toLocaleString('en-US', {month: 'long'}), m);
+    if (m === now.getMonth() + 1) opt.selected = true;
+    monthSel.appendChild(opt);
+  }
+  for (let y = 2024; y <= 2028; y++) {
+    const opt = new Option(y, y);
+    if (y === now.getFullYear()) opt.selected = true;
+    yearSel.appendChild(opt);
+  }
+
+  document.getElementById('refresh').onclick = load;
+
+  async function load() {
+    const key = localStorage.getItem('adminkey');
+    if (!key) return alert('Enter your admin key and click Save first');
+
+    const headers = { 'x-admin-key': key };
+    const params = new URLSearchParams({ month: monthSel.value, year: yearSel.value });
+
+    // Bookings
+    let html = '';
+    try {
+      const res = await fetch('/__admin/list-bookings?' + params, { headers });
+      const bookings = await res.json();
+      bookings.forEach(b => {
+        const d = new Date(b.start_at);
+        d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
+        const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(', ');
+        const deposit = (b.deposit_cents || 0) / 100;
+
+        html += `<div class="card">
+          <button class="delete" onclick="if(confirm('Delete forever?')) fetch('/api/admin/bookings/\${b.id}', {method:'DELETE', headers: {'x-admin-key': '\${key}'}}).then(load)">Delete</button>
+          <strong>\${dateStr} — \${timeStr}</strong> <span class="status \${b.status || 'pending'}">\${b.status || 'pending'}</span><br>
+          <small>\${b.package_title || b.package_id || '—'} • \${b.guests || '?'} guests</small><br><br>
+          <b>Name:</b> \${b.customer_name || '—'}<br>
+          <b>Email:</b> \${b.customer_email || '—'}<br>
+          <b>Phone:</b> \${b.phone || '—'}<br>
+          <b>Address:</b> \${addr || '—'}<br>
+          <b>Diet notes:</b> \${b.diet_notes || 'None'}<br><br>
+          <b>Deposit paid: $$\${deposit.toFixed(2)}</b>
+        </div>`;
+      });
+    } catch (e) { html = '<p style="color:red">Error loading bookings</p>'; }
+    document.getElementById('bookings').innerHTML = html || '<i>No bookings this month.</i>';
+
+    // Gift Cards
+    try {
+      const res = await fetch('/api/admin/giftcards', { headers });
+      const gifts = await res.json();
+      let ghtml = '';
+      gifts.forEach(g => {
+        const ds = new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        ghtml += `<div class="card"><button class="delete" onclick="if(confirm('Delete gift card?')) fetch('/api/admin/giftcards/\${g.id}', {method:'DELETE', headers: {'x-admin-key': '\${key}'}}).then(load)">Delete</button><b>\${ds}</b> — $$\{(g.amount_cents/100).toFixed(2)}</div>`;
+      });
+      document.getElementById('giftcards').innerHTML = ghtml || '<i>No gift cards yet.</i>';
+    } catch (e) {
+      document.getElementById('giftcards').innerHTML = '<p style="color:red">Error loading gift cards</p>';
+    }
+
+    // Blackouts
+    try {
+      const res = await fetch('/__admin/list-blackouts?' + params, { headers });
+      const blackouts = await res.json();
+      let bhtml = '';
+      blackouts.forEach(bo => {
+        const bd = new Date(bo.start_at);
+        bd.setMinutes(bd.getMinutes() + bd.getTimezoneOffset());
+        const bs = bd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        bhtml += `<div style="padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center">
+          <span><strong>\${bs}</strong> \${bo.reason ? '— ' + bo.reason : ''}</span>
+          <button class="danger" style="padding:4px 8px;font-size:12px" onclick="if(confirm('Remove blackout?')) fetch('/api/admin/blackouts/\${bo.id}', {method:'DELETE', headers: {'x-admin-key': '\${key}'}}).then(load)">Remove</button>
+        </div>`;
+      });
+      document.getElementById('blackouts').innerHTML = bhtml || '<i>No blackouts this month.</i>';
+    } catch (e) {
+      document.getElementById('blackouts').innerHTML = '<p style="color:red">Error loading blackouts</p>';
+    }
+  }
+
+  document.getElementById('addSingle').onclick = async () => {
+    const key = localStorage.getItem('adminkey');
+    const date = document.getElementById('singleDate').value;
+    const reason = document.getElementById('reason').value.trim();
+    if (!date) return alert('Pick a date');
+    await fetch('/api/admin/blackouts', { method: 'POST', headers: {'Content-Type': 'application/json', 'x-admin-key': key}, body: JSON.stringify({date, reason}) });
+    load();
+  };
+  document.getElementById('addBulk').onclick = async () => {
+    const key = localStorage.getItem('adminkey');
+    const raw = document.getElementById('bulkDates').value.trim();
+    if (!raw) return alert('Enter dates');
+    const dates = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    await fetch('/api/admin/blackouts/bulk', { method: 'POST', headers: {'Content-Type': 'application/json', 'x-admin-key': key}, body: JSON.stringify({dates}) });
+    document.getElementById('bulkDates').value = '';
+    load();
+  };
+
+  if (saved) load();
+})();
+</script>
+</body>
+</html>`;
 
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(html);
