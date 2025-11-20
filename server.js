@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI (PROPERLY FIXED - NO ESCAPING ISSUES) --------------------
+// -------------------- ADMIN UI (OLD LIST LAYOUT, FIXED WITH ESCAPED BACKTICKS) --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!DOCTYPE html>
@@ -1003,19 +1003,16 @@ app.get("/admin", (_req, res) => {
 <style>
   body { font-family: Inter, sans-serif; background:#f6f7f6; margin:0; padding:20px; color:#1c1c1c; }
   h1 { font-size:22px; margin-bottom:10px; }
-  .controls { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
-  select, input, button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
-  button { background:#1b5e20; color:white; cursor:pointer; }
-  .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; position:relative; }
-  .delete-btn { background:#c62828; color:white; border:0; padding:6px 12px; border-radius:6px; font-weight:600; position:absolute; top:16px; right:16px; cursor:pointer; }
-  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; display:inline-block; }
+  .controls { display:flex; gap:10px; margin-bottom:20px; }
+  select, input { padding:6px 8px; border-radius:6px; border:1px solid #ccc; }
+  .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; }
+  .delete-btn { background:#c62828; color:white; border:0; padding:8px 12px; border-radius:6px; font-weight:600; float:right; cursor:pointer; }
+  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; display:inline-block; margin-left:8px; }
   .muted { color:#666; font-size:14px; }
-  .section-title { font-size:18px; margin:30px 0 10px; font-weight:700; }
-  table { width:100%; border-collapse:collapse; margin-top:10px; }
-  th, td { padding:8px; text-align:left; border-bottom:1px solid #eee; }
-  th { background:#f1f8f0; }
+  .section-title { font-size:18px; margin-top:30px; margin-bottom:10px; font-weight:700; }
 </style>
 </head>
+
 <body>
   <h1>Private Chef Christopher LaMagna Database</h1>
 
@@ -1033,6 +1030,7 @@ app.get("/admin", (_req, res) => {
 
 <script>
 (function(){
+
   const monthEl = document.getElementById("month");
   const yearEl  = document.getElementById("year");
   const bookingsEl = document.getElementById("bookings");
@@ -1040,7 +1038,7 @@ app.get("/admin", (_req, res) => {
 
   const now = new Date();
   const currentYear = now.getFullYear();
-  const years = [currentYear-1, currentYear, currentYear+1, currentYear+2];
+  const years = [currentYear, currentYear+1, currentYear+2];
 
   for (let m = 1; m <= 12; m++) {
     const o = document.createElement("option");
@@ -1050,7 +1048,7 @@ app.get("/admin", (_req, res) => {
     monthEl.appendChild(o);
   }
 
-  years.forEach(y => {
+  years.forEach(y=>{
     const o = document.createElement("option");
     o.value = y;
     o.textContent = y;
@@ -1060,41 +1058,50 @@ app.get("/admin", (_req, res) => {
 
   document.getElementById("refreshBtn").onclick = loadData;
 
+  // ----------------------- LOAD BOOKINGS -----------------------
   async function loadBookings(){
     bookingsEl.innerHTML = "Loading…";
-    const params = new URLSearchParams({ month: monthEl.value, year: yearEl.value });
-    const r = await fetch("/__admin/list-bookings?" + params);
+
+    const params = new URLSearchParams({
+      month: monthEl.value,
+      year: yearEl.value
+    });
+
+    const r = await fetch("/__admin/list-bookings?" + params.toString());
     const list = await r.json();
 
-    if (!Array.isArray(list) || list.length === 0) {
+    if (!Array.isArray(list) || list.length === 0){
       bookingsEl.innerHTML = '<div class="muted">No bookings this month.</div>';
       return;
     }
 
-    let html = "";
+    bookingsEl.innerHTML = "";
     list.forEach(b => {
       const d = new Date(b.start_at);
       const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
       const timeStr = d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
 
-      html += '<div class="card">' +
-        '<button class="delete-btn" data-id="' + b.id + '">Delete</button>' +
-        '<div><strong>' + dateStr + ' — ' + timeStr + '</strong> <span class="status">' + (b.status || "unknown") + '</span></div>' +
-        '<div class="muted">' + (b.package_title || b.package_id || "—") + ' • ' + (b.guests || "?") + ' guests</div>' +
-        '<br>' +
-        '<div><strong>Name:</strong> ' + (b.customer_name || "—") + '</div>' +
-        '<div><strong>Email:</strong> ' + (b.customer_email || "—") + '</div>' +
-        '<div><strong>Phone:</strong> ' + (b.phone || "—") + '</div>' +
-        '<div><strong>Address:</strong> ' + (b.address_line1 || "") + " " + (b.city || "") + " " + (b.state || "") + " " + (b.zip || "") + '</div>' +
-        '<div><strong>Diet notes:</strong> ' + (b.diet_notes || "None") + '</div>' +
-        '<br>' +
-        '<div><strong>$' + ((b.subtotal_cents || 0)/100).toFixed(2) + '</strong></div>' +
-      '</div>';
+      const card = document.createElement("div");
+      card.className = "card";
+
+      card.innerHTML = \`
+        <button class="delete-btn" data-id="\${b.id}">Delete</button>
+        <div><strong>\${dateStr} — \${timeStr}</strong> <span class="status">\${b.status}</span></div>
+        <div class="muted">\${b.package_title || b.package_id} • \${b.guests} guests</div>
+        <br>
+        <div><strong>Name:</strong> \${b.customer_name}</div>
+        <div><strong>Email:</strong> \${b.customer_email}</div>
+        <div><strong>Phone:</strong> \${b.phone || "—"}</div>
+        <div><strong>Address:</strong> \${b.address_line1 || ""}, \${b.city || ""}, \${b.state || ""} \${b.zip || ""}</div>
+        <div><strong>Diet notes:</strong> \${b.diet_notes || "None"}</div>
+        <br>
+        <div><strong>$\${(b.subtotal_cents/100).toFixed(2)}</strong></div>
+      \`;
+
+      bookingsEl.appendChild(card);
     });
 
-    bookingsEl.innerHTML = html;
-
-    document.querySelectorAll(".delete-btn").forEach(btn => {
+    document.querySelectorAll(".delete-btn").forEach(btn=>{
       btn.onclick = async () => {
         if (!confirm("Delete this booking?")) return;
         await fetch("/api/admin/bookings/" + btn.dataset.id, { method:"DELETE" });
@@ -1103,36 +1110,42 @@ app.get("/admin", (_req, res) => {
     });
   }
 
+  // ----------------------- LOAD GIFT CARDS -----------------------
   async function loadGiftCards(){
     giftEl.innerHTML = "Loading…";
+
     const r = await fetch("/api/admin/giftcards");
     const list = await r.json();
 
-    if (!Array.isArray(list) || list.length === 0) {
+    if (!Array.isArray(list) || list.length === 0){
       giftEl.innerHTML = '<div class="muted">No gift cards sold yet.</div>';
       return;
     }
 
-    let html = "";
+    giftEl.innerHTML = "";
     list.forEach(g => {
+
       const d = new Date(g.created_at);
       const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
 
-      html += '<div class="card">' +
-        '<button class="delete-btn" data-id="' + g.id + '" data-type="gift">Delete</button>' +
-        '<div><strong>' + dateStr + '</strong></div>' +
-        '<div><strong>Amount:</strong> $' + (g.amount_cents/100).toFixed(2) + '</div>' +
-        '<div><strong>Recipient:</strong> ' + (g.recipient_name || "—") + ' (' + (g.recipient_email || "—") + ')</div>' +
-        '<div><strong>From:</strong> ' + (g.buyer_name || "—") + ' (' + (g.buyer_email || "—") + ')</div>' +
-        '<div><strong>Message:</strong> ' + (g.message || "—") + '</div>' +
-        '<div><strong>Deliver on:</strong> ' + (g.deliver_on || "—") + '</div>' +
-        '<div><strong>Stripe:</strong> ' + g.stripe_session_id + '</div>' +
-      '</div>';
+      const card = document.createElement("div");
+      card.className = "card";
+
+      card.innerHTML = \`
+        <button class="delete-btn" data-id="\${g.id}" data-type="gift">Delete</button>
+        <div><strong>\${dateStr}</strong></div>
+        <div><strong>Amount:</strong> $\${(g.amount_cents/100).toFixed(2)}</div>
+        <div><strong>Recipient:</strong> \${g.recipient_name} (\${g.recipient_email})</div>
+        <div><strong>From:</strong> \${g.buyer_name} (\${g.buyer_email})</div>
+        <div><strong>Message:</strong> \${g.message || "—"}</div>
+        <div><strong>Deliver on:</strong> \${g.deliver_on || "—"}</div>
+        <div><strong>Stripe:</strong> \${g.stripe_session_id}</div>
+      \`;
+
+      giftEl.appendChild(card);
     });
 
-    giftEl.innerHTML = html;
-
-    document.querySelectorAll(".delete-btn[data-type='gift']").forEach(btn => {
+    document.querySelectorAll(".delete-btn[data-type='gift']").forEach(btn=>{
       btn.onclick = async () => {
         if (!confirm("Delete this gift card?")) return;
         await fetch("/api/admin/giftcards/" + btn.dataset.id, { method:"DELETE" });
