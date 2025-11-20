@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI (OLD LIST LAYOUT, FIXED) --------------------
+// -------------------- ADMIN UI (FIXED ESCAPING) --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!DOCTYPE html>
@@ -1084,19 +1084,19 @@ app.get("/admin", (_req, res) => {
       const card = document.createElement("div");
       card.className = "card";
 
-      card.innerHTML = `
-        <button class="delete-btn" data-id="${b.id}">Delete</button>
-        <div><strong>${dateStr} — ${timeStr}</strong> <span class="status">${b.status}</span></div>
-        <div class="muted">${b.package_title || b.package_id} • ${b.guests} guests</div>
+      card.innerHTML = \`
+        <button class="delete-btn" data-id="\${b.id}">Delete</button>
+        <div><strong>\${dateStr} — \${timeStr}</strong> <span class="status">\${b.status}</span></div>
+        <div class="muted">\${b.package_title || b.package_id || "—"} • \${b.guests} guests</div>
         <br>
-        <div><strong>Name:</strong> ${b.customer_name}</div>
-        <div><strong>Email:</strong> ${b.customer_email}</div>
-        <div><strong>Phone:</strong> ${b.phone || "—"}</div>
-        <div><strong>Address:</strong> ${b.address_line1 || ' '}, ${b.city || ' '}, ${b.state || ' '} ${b.zip || ' '}</div>
-        <div><strong>Diet notes:</strong> ${b.diet_notes || "None"}</div>
+        <div><strong>Name:</strong> \${b.customer_name}</div>
+        <div><strong>Email:</strong> \${b.customer_email}</div>
+        <div><strong>Phone:</strong> \${b.phone || "—"}</div>
+        <div><strong>Address:</strong> \${b.address_line1 || ""} \${b.city || ""} \${b.state || ""} \${b.zip || ""}</div>
+        <div><strong>Diet notes:</strong> \${b.diet_notes || "None"}</div>
         <br>
-        <div><strong>$${(b.subtotal_cents/100).toFixed(2)}</strong></div>
-      `;
+        <div><strong>$$\${(b.subtotal_cents/100).toFixed(2)}</strong></div>
+      \`;
 
       bookingsEl.appendChild(card);
     });
@@ -1131,16 +1131,16 @@ app.get("/admin", (_req, res) => {
       const card = document.createElement("div");
       card.className = "card";
 
-      card.innerHTML = `
-        <button class="delete-btn" data-id="${g.id}" data-type="gift">Delete</button>
-        <div><strong>${dateStr}</strong></div>
-        <div><strong>Amount:</strong> $${(g.amount_cents/100).toFixed(2)}</div>
-        <div><strong>Recipient:</strong> ${g.recipient_name} (${g.recipient_email})</div>
-        <div><strong>From:</strong> ${g.buyer_name} (${g.buyer_email})</div>
-        <div><strong>Message:</strong> ${g.message || "—"}</div>
-        <div><strong>Deliver on:</strong> ${g.deliver_on || "—"}</div>
-        <div><strong>Stripe:</strong> ${g.stripe_session_id}</div>
-      `;
+      card.innerHTML = \`
+        <button class="delete-btn" data-id="\${g.id}" data-type="gift">Delete</button>
+        <div><strong>\${dateStr}</strong></div>
+        <div><strong>Amount:</strong> $$\${(g.amount_cents/100).toFixed(2)}</div>
+        <div><strong>Recipient:</strong> \${g.recipient_name} (\${g.recipient_email})</div>
+        <div><strong>From:</strong> \${g.buyer_name} (\${g.buyer_email})</div>
+        <div><strong>Message:</strong> \${g.message || "—"}</div>
+        <div><strong>Deliver on:</strong> \${g.deliver_on || "—"}</div>
+        <div><strong>Stripe:</strong> \${g.stripe_session_id}</div>
+      \`;
 
       giftEl.appendChild(card);
     });
