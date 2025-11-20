@@ -20,6 +20,23 @@ if (!STRIPE_SECRET) console.warn("⚠️ STRIPE_SECRET is not set.");
 if (!process.env.SITE_URL) console.warn("⚠️ SITE_URL is not set.");
 const stripe = new Stripe(STRIPE_SECRET);
 
+// ---------------- CORS FIX (Squarespace -> Render) ----------------
+app.use(
+  cors({
+    origin: [
+      "https://privatechefbooking.onrender.com",
+      "https://www.privatechefchristopherlamagna.com",
+      "https://privatechefchristopherlamagna.com"
+    ],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-admin-key"],
+    credentials: false
+  })
+);
+
+// Body parser AFTER CORS
+app.use(express.json());
+
 // ----------------- Postgres -----------------
 const { Pool } = pkg;
 const pool = new Pool({
@@ -88,7 +105,7 @@ async function initSchema() {
   ];
   for (const sql of alters) await pool.query(sql);
 
-    // ---- Gift Cards Table ----
+  // ---- Gift Cards Table ----
   await pool.query(`
     CREATE TABLE IF NOT EXISTS gift_cards (
       id BIGSERIAL PRIMARY KEY,
