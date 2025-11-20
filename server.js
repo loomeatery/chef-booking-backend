@@ -1270,9 +1270,10 @@ app.get("/admin", (_req, res) => {
         const c1 = document.createElement("div");
         const d = (ev.dateISO||"").slice(0,10);
 
-        c1.innerHTML =
-          `<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
-           <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>`;
+       c1.innerHTML = `
+  <div style="font-weight:800">${ev.title || ev.id || "Pop-Up"}</div>
+  <div class="small">${d || ""} • ${ev.location || "Location TBA"}</div>
+`;
 
         const c2 = document.createElement("div");
         const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
