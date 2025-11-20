@@ -42,6 +42,26 @@ async function initSchema() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+    
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_cards (
+      id BIGSERIAL PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      original_amount_cents INTEGER NOT NULL,
+      buyer_name TEXT,
+      buyer_email TEXT,
+      recipient_name TEXT,
+      recipient_email TEXT,
+      message TEXT,
+      deliver_on DATE,
+      with_basket BOOLEAN DEFAULT false,
+      stripe_session_id TEXT UNIQUE,
+      status TEXT DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS gift_cards_code_idx ON gift_cards (code);`);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS blackout_dates (
@@ -175,6 +195,24 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const md = session.metadata || {};
+      
+            // GIFT CARD
+      if (md.type === "gift_card") {
+        const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
+
+        await pool.query(`
+          INSERT INTO gift_cards (code, amount_cents, original_amount_cents, with_basket, buyer_name, buyer_email, recipient_name, recipient_email, message, deliver_on, stripe_session_id, status)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active')
+        `, [code, md.amount_cents, md.amount_cents, md.with_basket==="true", md.buyer_name, md.buyer_email, md.recipient_name, md.recipient_email, md.message || null, md.deliver_on || null, session.id]);
+
+        await sendEmail({
+          to: md.buyer_email,
+          subject: `Gift Card $${(Number(md.amount_cents)/100).toFixed(2)} Confirmed`,
+          html: `<h2>Thank you!</h2><p>Your gift card is confirmed.</p><p>Redeem code: <strong>${code}</strong></p><p>Chef Chris will send the PDF within 24 hours.</p>`
+        });
+
+        return res.json({received: true});
+      }
       const bookingId = md.booking_id ? Number(md.booking_id) : null;
       const eventDate = md.event_date; // "YYYY-MM-DD"
 
@@ -1355,6 +1393,55 @@ app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
 
 
 // ----------------- Start server -----------------
+// GIFT CARD CHECKOUT
+app.post("/api/giftcards/create-checkout", express.json(), async (req, res) => {
+  try {
+    const { amount, basket = false, buyer_name, buyer_email, recipient_name, recipient_email, message = "", deliver_on } = req.body;
+    if (amount < 25 || !buyer_name || !buyer_email || !recipient_name || !recipient_email) return res.status(400).json({error: "Invalid"});
+
+    const amountCents = Math.round(amount * 100);
+    const basketCents = basket ? 12500 : 0;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      payment_method_types: ["card"],
+      line_items: [
+        { price_data: { currency: "usd", product_data: { name: `Gift Card – $${amount}` }, unit_amount: amountCents }, quantity: 1 },
+        ...(basket ? [{ price_data: { currency: "usd", product_data: { name: "Gift Basket (+$125)" }, unit_amount: 12500 }, quantity: 1 }] : [])
+      ],
+      success_url: `${process.env.SITE_URL}/gift-card-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_URL}/gift-cards`,
+      customer_email: buyer_email,
+      metadata: {
+        type: "gift_card",
+        amount_cents: amountCents,
+        with_basket: String(basket),
+        buyer_name, buyer_email, recipient_name, recipient_email,
+        message, deliver_on: deliver_on || ""
+      }
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({error: "Failed"});
+  }
+});
+
+// GIFT CARD SUCCESS PAGE
+app.get("/gift-card-success", (req, res) => {
+  res.send(`<!doctype html><html><head><title>Gift Card - Thank You!</title>
+  <style>body{font-family:system-ui;background:#000;color:#fff;text-align:center;padding:80px;line-height:1.6}
+  h1{font-size:42px;margin:0 0 16px}a{color:#bfa87c;text-decoration:none;font-weight:600}</style></head><body>
+  <h1>Thank You! 🎁</h1>
+  <p>Your gift card purchase is complete.</p>
+  <p>You’ll receive a confirmation email shortly.</p>
+  <p>Chef Chris will prepare and send the PDF gift card to the recipient within 24 hours.</p>
+  <br><a href="/">← Back Home</a>
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <script>confetti({particleCount:180,spread:70,origin:{y:0.6}});</script>
+  </body></html>`);
+});
+
 app.listen(port, () => {
   console.log(`Chef booking server listening on ${port}`);
 });
