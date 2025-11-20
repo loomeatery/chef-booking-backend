@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL & BULLETPROOF --------------------
+// -------------------- ADMIN UI — FINAL & BULLETPROOF (DATES + DEPOSIT FIXED) --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(
@@ -1032,16 +1032,17 @@ app.get("/admin", (_req, res) => {
       "const p=new URLSearchParams({month:document.getElementById('month').value,year:document.getElementById('year').value});" +
       "const bl=await fetch('/__admin/list-bookings?'+p,{headers:h});const bookings=await bl.json();" +
       "let html='';bookings.forEach(b=>{" +
-        "const d=new Date(b.start_at+' UTC');" + // ← fixes the off-by-one-day bug
+        "const d=new Date(b.start_at);d.setMinutes(d.getMinutes() + d.getTimezoneOffset());" + // ← FIXED: correct date in NY time
         "const dateStr=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
         "const timeStr=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});" +
         "const addr=[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(', ');" +
+        "const deposit=(b.deposit_cents||0)/100;" +
         "html+=`<div class='card'><button class='delete' onclick='if(confirm(\\'Delete forever?\\'))fetch(\\'/api/admin/bookings/${b.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Delete</button>" +
         "<strong>${dateStr} — ${timeStr}</strong> <span class='status ${b.status||'pending'}'>${b.status||'pending'}</span><br>" +
         "<small>${b.package_title||b.package_id||'—'} • ${b.guests||'?'} guests</small><br><br>" +
         "<b>Name:</b> ${b.customer_name||'—'}<br><b>Email:</b> ${b.customer_email||'—'}<br><b>Phone:</b> ${b.phone||'—'}<br>" +
         "<b>Address:</b> ${addr||'—'}<br><b>Diet notes:</b> ${b.diet_notes||'None'}<br><br>" +
-        "<b>$${((b.subtotal_cents||0)/100).toFixed(2)}</b></div>`;" +
+        "<b>Deposit paid: $${deposit.toFixed(2)}</b></div>`;" +
       "});document.getElementById('bookings').innerHTML=html||'<i>No bookings this month.</i>';" +
       "const gl=await fetch('/api/admin/giftcards',{headers:h});const gifts=await gl.json();" +
       "let ghtml='';gifts.forEach(g=>{" +
