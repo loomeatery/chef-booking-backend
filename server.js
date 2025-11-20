@@ -1036,7 +1036,6 @@ app.get("/admin", (_req, res) => {
   const bookingsEl = document.getElementById("bookings");
   const giftEl     = document.getElementById("giftcards");
 
-  // Populate month/year dropdowns
   const now = new Date();
   const currentYear = now.getFullYear();
   const years = [currentYear, currentYear+1, currentYear+2];
@@ -1044,7 +1043,7 @@ app.get("/admin", (_req, res) => {
   for (let m = 1; m <= 12; m++) {
     const o = document.createElement("option");
     o.value = m;
-    o.textContent = new Date(2025, m-1, 1).toLocaleString("en-US", { month:"long" });
+    o.textContent = new Date(currentYear, m-1, 1).toLocaleString("en-US", { month:"long" });
     if (m === now.getMonth()+1) o.selected = true;
     monthEl.appendChild(o);
   }
@@ -1093,7 +1092,7 @@ app.get("/admin", (_req, res) => {
         <div><strong>Name:</strong> ${b.customer_name}</div>
         <div><strong>Email:</strong> ${b.customer_email}</div>
         <div><strong>Phone:</strong> ${b.phone || "—"}</div>
-        <div><strong>Address:</strong> ${b.address_line1 || ""}, ${b.city || ""}, ${b.state || ""} ${b.zip || ""}</div>
+        <div><strong>Address:</strong> ${b.address_line1 || ' '}, ${b.city || ' '}, ${b.state || ' '} ${b.zip || ' '}</div>
         <div><strong>Diet notes:</strong> ${b.diet_notes || "None"}</div>
         <br>
         <div><strong>$${(b.subtotal_cents/100).toFixed(2)}</strong></div>
