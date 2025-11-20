@@ -990,10 +990,9 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL, WORKING LIKE BEFORE + ALL FIXES --------------------
+// -------------------- ADMIN UI — FINAL, 100% WORKING ON RENDER --------------------
 app.get("/admin", (_req, res) => {
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1125,12 +1124,12 @@ app.get("/admin", (_req, res) => {
       const ds = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
       ghtml += \`<div class="card">
         <button class="delete" onclick="if(confirm('Delete gift card?')) fetch('/api/admin/giftcards/\${g.id}', {method:'DELETE', headers:h}).then(load)">Delete</button>
-        <b>\${ds}</b> — $$\{(g.amount_cents/100).toFixed(2)}
+        <b>\${ds}</b> — $$\{(g.amount_cents / 100).toFixed(2)}
       </div>\`;
     });
     document.getElementById('giftcards').innerHTML = ghtml || '<i>No gift cards yet.</i>';
 
-    // Blackouts — THIS WAS MISSING BEFORE
+    // Blackouts
     const blkRes = await fetch('/__admin/list-blackouts?' + params, { headers: h });
     const blackouts = await blkRes.json();
     let bhtml = '';
@@ -1169,7 +1168,10 @@ app.get("/admin", (_req, res) => {
 })();
 </script>
 </body>
-</html>`);
+</html>`;
+
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(html);
 });
 
 // ----------------- Events JSON helpers (for pop-ups) -----------------
