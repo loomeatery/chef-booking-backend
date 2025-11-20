@@ -34,6 +34,18 @@ app.use(
   })
 );
 
+// FIX: Handle browser preflight (Squarespace requires this)
+app.options("*", cors({
+  origin: [
+    "https://www.privatechefchristopherlamagna.com",
+    "https://privatechefchristopherlamagna.com",
+    "https://privatechefbooking.onrender.com"
+  ],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-admin-key"],
+  credentials: false
+}));
+
 // Body parser AFTER CORS
 app.use(express.json());
 
