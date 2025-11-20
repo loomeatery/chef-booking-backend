@@ -990,8 +990,8 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin UI (OLD LOOK + NEW API ROUTES) -----------------
-app.get("/admin", (req, res) => {
+// ---------------- Admin UI (old-style list layout) ----------------
+app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!DOCTYPE html>
 <html lang="en">
@@ -999,252 +999,314 @@ app.get("/admin", (req, res) => {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Private Chef Christopher LaMagna Database</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-
 <style>
-  body { background:#f7f9f5; margin:0; font-family:Inter, sans-serif; color:#1f2d24; }
-  header { background:#0f452d; color:white; padding:16px; font-size:20px; font-weight:700; }
-  .wrap { max-width:900px; margin:0 auto; padding:20px; }
-  h2 { margin-top:32px; margin-bottom:10px; color:#0f452d; font-size:22px; }
-  select,input,button {
-    font-family:inherit; font-size:14px; padding:7px 10px;
-    border-radius:8px; border:1px solid #cbd5e1;
-  }
-  button { background:#0f452d; color:white; border:none; cursor:pointer; font-weight:600; }
-  button:hover { opacity:0.85 }
-
+  body { font-family: Inter, sans-serif; background:#f8fdf8; margin:0; padding:20px; }
+  h1 { margin-top:0; }
+  .section { margin-top:30px; }
   .booking-card {
-    background:white; padding:18px; border-radius:12px;
-    margin-bottom:18px; border-left:5px solid #0f452d;
-    box-shadow:0 1px 2px rgba(0,0,0,0.06);
+    background:#ffffff;
+    border-radius:10px;
+    padding:20px;
+    margin-bottom:20px;
+    border-left:6px solid #0b6623;
+    position:relative;
   }
-
-  .status { padding:4px 9px; border-radius:6px; font-size:12px; font-weight:600; margin-left:8px; }
-  .confirmed { background:#dcfce7; color:#14532d; }
-  .pending { background:#fef9c3; color:#7a5c00; }
-
   .delete-btn {
-    float:right; background:#c62828; color:white;
-    padding:6px 10px; border-radius:6px; margin-top:6px;
+    position:absolute;
+    right:20px;
+    top:20px;
+    background:#d33;
+    color:white;
+    border:none;
+    padding:8px 14px;
+    border-radius:6px;
+    cursor:pointer;
   }
-
-  .chip {
-    display:inline-block; background:#eef2ff; color:#3730a3;
-    padding:3px 7px; border-radius:6px; border:1px solid #d1d5db;
-    font-size:12px; margin-top:6px;
+  .status-confirmed {
+    display:inline-block;
+    background:#d9f5dd;
+    color:#0a7f14;
+    padding:4px 10px;
+    border-radius:6px;
+    font-size:13px;
+    margin-left:10px;
   }
-  .mut { font-size:13px; color:#6b7280; }
+  .status-pending {
+    display:inline-block;
+    background:#eee;
+    color:#555;
+    padding:4px 10px;
+    border-radius:6px;
+    font-size:13px;
+    margin-left:10px;
+  }
+  .input-row { margin-bottom:15px; }
+  .input-row label { display:block; margin-bottom:5px; }
+  input[type="text"], input[type="number"], input[type="date"] {
+    width:200px; padding:6px 10px; border:1px solid #ccc;
+    border-radius:6px;
+  }
+  button { cursor:pointer; }
+  .giftcard-card {
+    background:#ffffff;
+    border-radius:8px;
+    padding:15px;
+    margin-bottom:12px;
+    border-left:4px solid #444;
+  }
 </style>
 </head>
 
 <body>
-<header>Private Chef Christopher LaMagna Database</header>
-<div class="wrap">
+<h1>Private Chef Christopher LaMagna Database</h1>
 
-  <!-- Admin Key -->
-  <div style="margin-bottom:20px">
-    <label style="font-weight:600">Admin key</label><br>
-    <input id="adminkey" type="password" placeholder="Admin key" style="width:200px" />
-    <button onclick="saveKey()">Save</button>
-    <button onclick="clearKey()" style="background:#e2e8f0;color:#111;margin-left:6px">Clear</button>
-  </div>
+<!-- Admin Key -->
+<div class="input-row">
+  <label>Admin key</label>
+  <input id="adminkey" type="password" />
+  <button onclick="saveKey()">Save</button>
+  <button onclick="clearKey()">Clear</button>
+</div>
 
-  <!-- Month Select -->
-  <div style="display:flex;gap:10px;margin-bottom:20px">
-    <select id="month"></select>
-    <select id="year"></select>
-    <button onclick="refresh()">Refresh</button>
-  </div>
+<!-- Month / Year -->
+<div class="input-row">
+  <select id="month"></select>
+  <select id="year"></select>
+  <button onclick="loadAll()">Refresh</button>
+</div>
 
-  <!-- Sections -->
+<!-- BOOKINGS -->
+<div class="section">
   <h2>Bookings</h2>
   <div id="bookings">Loading…</div>
+</div>
 
+<!-- POP-UP EVENTS -->
+<div class="section">
   <h2>Pop-Up Events</h2>
   <div id="popups">Loading…</div>
+</div>
 
+<!-- GIFT CARDS -->
+<div class="section">
   <h2>Gift Cards</h2>
   <div id="giftcards">Loading…</div>
+</div>
 
+<!-- BLACKOUT DATES -->
+<div class="section">
   <h2>Blackout Dates</h2>
-  <div style="display:flex;gap:10px;margin-bottom:10px">
-    <input type="date" id="blackDate" />
-    <input type="text" id="reason" placeholder="Reason (optional)" />
+
+  <div class="input-row">
+    <input type="date" id="blackdate" />
+    <input type="text" id="blackreason" placeholder="Reason (optional)" />
     <button onclick="addBlackout()">Add</button>
   </div>
-  <div id="blackouts">Loading…</div>
 
+  <div id="blackouts">Loading…</div>
 </div>
 
 <script>
-// --- ADMIN KEY ---
-let key = localStorage.getItem("adminkey") || "";
-document.getElementById("adminkey").value = key;
+/* ---------- Admin Key ---------------- */
+const keyInput = document.getElementById("adminkey");
+keyInput.value = localStorage.getItem("adminkey") || "";
 
-function saveKey(){
-  key = document.getElementById("adminkey").value.trim();
-  localStorage.setItem("adminkey", key);
-  refresh();
+function saveKey() { localStorage.setItem("adminkey", keyInput.value); }
+function clearKey() { localStorage.removeItem("adminkey"); keyInput.value=""; }
+
+/* ---------- Load Month/Year Dropdown ------------ */
+const monthSel = document.getElementById("month");
+const yearSel = document.getElementById("year");
+
+for (let m=0; m<12; m++){
+  const o = document.createElement("option");
+  o.value = m;
+  o.textContent = new Date(0, m).toLocaleString("en",{month:"long"});
+  monthSel.appendChild(o);
 }
-function clearKey(){
-  localStorage.removeItem("adminkey");
-  key = "";
-  document.getElementById("adminkey").value = "";
-  refresh();
+
+const thisYear = new Date().getFullYear();
+for (let y=thisYear-1; y<=thisYear+2; y++){
+  const o = document.createElement("option");
+  o.value = y;
+  o.textContent = y;
+  yearSel.appendChild(o);
 }
 
-// --- MONTH/YEAR SELECT ---
-const m = document.getElementById("month");
-const y = document.getElementById("year");
+monthSel.value = new Date().getMonth();
+yearSel.value  = new Date().getFullYear();
 
-for(let i=1;i<=12;i++){
-  const opt=document.createElement("option");
-  opt.value=i;
-  opt.textContent=new Date(0,i-1).toLocaleString("default",{month:"long"});
-  m.appendChild(opt);
+/* ------------- API Helpers ------------- */
+function apiget(path){
+  return fetch(path, {
+    headers:{ "x-admin-key": localStorage.getItem("adminkey") || "" }
+  }).then(r => r.json().catch(()=>null));
 }
-const currY = new Date().getFullYear();
-for(let yr=currY;yr<=currY+3;yr++){
-  const opt=document.createElement("option");
-  opt.value=yr; opt.textContent=yr;
-  y.appendChild(opt);
+
+function apipost(path, body){
+  return fetch(path, {
+    method:"POST",
+    headers:{
+      "Content-Type":"application/json",
+      "x-admin-key": localStorage.getItem("adminkey") || ""
+    },
+    body: JSON.stringify(body)
+  }).then(r=>r.json().catch(()=>null));
 }
-m.value=new Date().getMonth()+1;
-y.value=new Date().getFullYear();
 
+function apidelete(path){
+  return fetch(path, {
+    method:"DELETE",
+    headers:{ "x-admin-key": localStorage.getItem("adminkey") || "" }
+  }).then(r=>r.json().catch(()=>null));
+}
 
-// --- BOOKINGS (NEW API: /__admin/list-bookings) ---
+/* ------------- Load All Sections ------------- */
+async function loadAll(){
+  loadBookings();
+  loadPopups();
+  loadGiftcards();
+  loadBlackouts();
+}
+
+/* ---------------- BOOKINGS ---------------- */
 async function loadBookings(){
-  const res = await fetch(\`/__admin/list-bookings?year=\${y.value}&month=\${m.value}\`, {
-    headers: key ? { "x-admin-key": key } : {}
-  });
-  const data = await res.json();
-  const wrap = document.getElementById("bookings");
-  wrap.innerHTML = "";
+  const m = Number(monthSel.value)+1;
+  const y = Number(yearSel.value);
+  let data = await apiget(\`/__admin/list-bookings?month=\${m}&year=\${y}\`);
 
-  data.forEach(b => {
-    const card = document.createElement("div");
-    card.className = "booking-card";
+  const box = document.getElementById("bookings");
 
-    const date = new Date(b.start_at).toLocaleDateString("en-US",
-      {month:"short",day:"numeric",year:"numeric"});
+  if(!data || !Array.isArray(data)){
+    box.innerHTML = "Error loading bookings";
+    return;
+  }
 
-    const ts = (b.deposit_cents/100).toFixed(2);
+  if(data.length===0){
+    box.innerHTML = "No bookings this month.";
+    return;
+  }
 
-    card.innerHTML = \`
-      <div style="font-size:18px;font-weight:700;">
-        \${date} — \${b.customer_name}
-        <span class="status \${b.status}">\${b.status}</span>
+  box.innerHTML = data.map(b => {
+    let status = b.status === "confirmed"
+      ? '<span class="status-confirmed">confirmed</span>'
+      : '<span class="status-pending">pending</span>';
+
+    return \`
+      <div class="booking-card">
+        <button class="delete-btn" onclick="deleteBooking('\${b.id}')">Delete</button>
+        <div><b>\${b.date_display}</b> — \${b.name} \${status}</div>
+        <div>\${b.package}</div>
+        <div>Email: \${b.email}</div>
+        <div>Phone: \${b.phone}</div>
+        <div>Address: \${b.address}</div>
+        <div>Diet notes: \${b.diet || "None"}</div>
+        <div><b>\$ \${b.total}</b></div>
       </div>
-      <div class="mut">\${b.package_title} • \${b.guests} guests</div>
-      <div class="mut">\${b.customer_email}</div>
-
-      <p><b>Phone:</b> \${b.phone || "-"}</p>
-      <p><b>Address:</b> \${b.address_line1 || ""}, \${b.city || ""}, \${b.state || ""} \${b.zip || ""}</p>
-      <p><b>Diet notes:</b> \${b.diet_notes || "None"}</p>
-
-      \${b.tablescape==="yes" ? "<div class='chip'>Tablescape</div>" : ""}
-
-      <p style="margin-top:10px;font-size:18px;font-weight:700;">$ \${ts}</p>
-
-      <button class="delete-btn" onclick="deleteBooking(\${b.id})">Delete</button>
     \`;
-
-    wrap.appendChild(card);
-  });
+  }).join("");
 }
 
 async function deleteBooking(id){
-  if(!confirm("Delete this booking?")) return;
-  await fetch(\`/api/admin/bookings/\${id}\`,{
-    method:"DELETE",
-    headers: key ? { "x-admin-key": key } : {}
-  });
+  if(!confirm("Delete booking?")) return;
+  await apidelete("/api/admin/bookings/"+id);
   loadBookings();
 }
 
-
-// --- POP-UPS (NEW API: /api/events) ---
+/* ---------------- POP-UPS ---------------- */
 async function loadPopups(){
-  const res = await fetch("/api/events", {
-    headers: key ? { "x-admin-key": key } : {}
-  });
-  const events = await res.json();
+  const box = document.getElementById("popups");
+  let data = await apiget("/api/events");
 
-  const wrap = document.getElementById("popups");
-  wrap.innerHTML = "";
+  if(!data){
+    box.innerHTML = "Error loading pop-ups.";
+    return;
+  }
 
-  events.forEach(ev => {
-    wrap.innerHTML += \`
-      <div style="background:white;border-radius:10px;padding:12px;margin-bottom:10px;">
+  if(data.length===0){
+    box.innerHTML = "No pop-up events.";
+    return;
+  }
+
+  box.innerHTML = data.map(ev => {
+    return \`
+      <div class="giftcard-card">
         <b>\${ev.title}</b><br>
-        <span class="mut">\${ev.date} • \${ev.time}</span><br>
-        <span class="mut">Capacity: \${ev.capacity} • Sold: \${ev.sold}</span><br>
-        <button style="margin-top:6px;font-size:12px"
-          onclick="adjustSold('\${ev.id}')">Adjust Sold</button>
+        Date: \${ev.date}<br>
+        Sold: \${ev.sold} / \${ev.capacity}
       </div>
     \`;
-  });
+  }).join("");
 }
 
-function adjustSold(id){
-  const delta = prompt("Adjust sold by (+1, -1):");
-  if(!delta) return;
-  fetch(\`/api/admin/events/\${id}/adjust-sold\`,{
-    method:"POST",
-    headers:{ "Content-Type":"application/json", ...(key ? {"x-admin-key":key}:{}) },
-    body:JSON.stringify({ delta:Number(delta) })
-  }).then(()=>loadPopups());
+/* ---------------- GIFT CARDS ---------------- */
+async function loadGiftcards(){
+  const box = document.getElementById("giftcards");
+  let data;
+
+  try { data = await apiget("/api/admin/giftcards"); }
+  catch(e){}
+
+  if(!data || !Array.isArray(data)){
+    box.innerHTML = "No gift cards yet.";
+    return;
+  }
+
+  if(data.length===0){
+    box.innerHTML = "No gift cards yet.";
+    return;
+  }
+
+  box.innerHTML = data.map(gc => {
+    return \`
+      <div class="giftcard-card">
+        <b>\$ \${gc.amount}</b> — \${gc.recipient_name}  
+        <br>From: \${gc.buyer_name}  
+        <br>Email: \${gc.recipient_email}
+        <br>Deliver: \${gc.deliver_on}
+        <br>Gift Basket: \${gc.basket ? "Yes" : "No"}
+      </div>
+    \`;
+  }).join("");
 }
 
-
-// --- GIFT CARDS (API EXISTS: /api/admin/giftcards) ---
-async function loadGiftCards(){
-  const res = await fetch("/api/admin/giftcards", {
-    headers: key ? { "x-admin-key": key } : {}
-  });
-  document.getElementById("giftcards").innerHTML = await res.text();
-}
-
-
-// --- BLACKOUTS (NEW API: /__admin/list-blackouts) ---
+/* ---------------- BLACKOUTS ---------------- */
 async function loadBlackouts(){
-  const res = await fetch(\`/__admin/list-blackouts?year=\${y.value}&month=\${m.value}\`, {
-    headers: key ? { "x-admin-key": key } : {}
-  });
-  document.getElementById("blackouts").innerHTML = await res.text();
+  const box = document.getElementById("blackouts");
+  let data = await apiget("/__admin/list-blackouts");
+
+  if(!data || !Array.isArray(data)){
+    box.innerHTML = "Error loading blackouts.";
+    return;
+  }
+
+  if(data.length===0){
+    box.innerHTML = "No blackouts this month.";
+    return;
+  }
+
+  box.innerHTML = data.map(b => {
+    return \`
+      <div class="giftcard-card">
+        <b>\${b.start}</b> — \${b.reason || ""}  
+      </div>
+    \`;
+  }).join("");
 }
 
-
-// --- ADD BLACKOUT ---
 async function addBlackout(){
-  const date = document.getElementById("blackDate").value;
-  const reason = document.getElementById("reason").value.trim();
-  if(!date) return alert("Pick a date");
+  const d = document.getElementById("blackdate").value;
+  const r = document.getElementById("blackreason").value;
+  if(!d) return alert("Pick a date");
 
-  await fetch("/api/admin/blackouts",{
-    method:"POST",
-    headers:{ "Content-Type":"application/json", ...(key ? {"x-admin-key":key}:{}) },
-    body:JSON.stringify({date, reason})
-  });
-
+  await apipost("/api/admin/blackouts", { start: d, reason: r });
   loadBlackouts();
 }
-
-
-// --- REFRESH ALL ---
-function refresh(){
-  loadBookings();
-  loadPopups();
-  loadGiftCards();
-  loadBlackouts();
-}
-
-refresh();
 </script>
 
 </body>
-</html>`);
+</html>
+`);
 });
 
 // ----------------- Events JSON helpers (for pop-ups) -----------------
