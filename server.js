@@ -88,6 +88,25 @@ async function initSchema() {
   ];
   for (const sql of alters) await pool.query(sql);
 
+    // ---- Gift Cards Table ----
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_cards (
+      id BIGSERIAL PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      buyer_name TEXT,
+      buyer_email TEXT,
+      recipient_name TEXT,
+      recipient_email TEXT,
+      message TEXT,
+      deliver_on DATE,
+      basket BOOLEAN DEFAULT false,
+      stripe_session_id TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
   console.log("✅ Database schema ready");
 }
 initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); });
@@ -292,7 +311,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.error("❌ Pop-up seat update failed:", e);
       }
 
-      // ------ Send confirmation email (guest + admin copy)
+      // ------ Send booking confirmation (guest + admin copy)
       const guestEmail = cd.email || md.email || "";
       const safeName   = fullName || "Guest";
       const pkgTitle   = md.package_title || md.package || (md.event_title || "Private Event");
@@ -338,6 +357,67 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           html
         });
       }
+
+
+      /* ==================== GIFT CARD LOGIC INSERTED HERE ==================== */
+
+      if (session.metadata?.giftcard === "yes") {
+        try {
+          const m = session.metadata;
+
+          await pool.query(
+            `INSERT INTO gift_cards
+              (code, amount_cents, buyer_name, buyer_email,
+               recipient_name, recipient_email, message,
+               deliver_on, basket, stripe_session_id, status)
+             VALUES
+              ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'paid')
+             ON CONFLICT (stripe_session_id) DO NOTHING`,
+            [
+              m.code,
+              Number(m.amount_cents || 0),
+              m.buyer_name || "",
+              m.buyer_email || "",
+              m.recipient_name || "",
+              m.recipient_email || "",
+              m.message || "",
+              m.deliver_on || null,
+              m.basket === "yes",
+              session.id
+            ]
+          );
+
+          // ---- Gift card confirmation email ----
+          if (m.buyer_email) {
+            await sendEmail({
+              to: m.buyer_email,
+              subject: "Your Gift Card Purchase",
+              html: `
+                <div style="font-family:ui-sans-serif;max-width:600px;margin:0 auto;line-height:1.6">
+                  <h2 style="margin:0 0 8px">Thank you for your purchase!</h2>
+                  <p>Your gift card has been processed.</p>
+
+                  <p><strong>Gift Card Code:</strong> ${m.code}</p>
+                  <p><strong>Recipient:</strong> ${m.recipient_name || "—"} (${m.recipient_email || "—"})</p>
+                  <p><strong>Amount:</strong> $${(Number(m.amount_cents)/100).toFixed(2)}</p>
+
+                  <p>I will send the PDF gift card shortly.</p>
+
+                  <p style="font-size:13px;color:#666">If you need anything, just reply to this email.</p>
+                </div>
+              `
+            });
+          }
+
+          console.log(`🎁 Gift card processed: ${m.code}`);
+
+        } catch (e) {
+          console.error("Gift card processing failed:", e);
+        }
+      }
+
+      /* ================== END GIFT CARD LOGIC ================== */
+
     }
 
     res.json({ received: true });
@@ -346,6 +426,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     res.status(500).send("Server error");
   }
 });
+
 // ----------------- Normal middleware (after webhook) -----------------
 
 app.use(cors());
@@ -464,6 +545,63 @@ app.post("/api/quote", (req, res) => {
   } catch (err) {
     console.error("Quote error:", err);
     res.status(400).json({ error: "Unable to create quote." });
+  }
+});
+
+// ====================== GIFT CARD CHECKOUT ======================
+app.post("/api/giftcards/create-checkout", async (req, res) => {
+  try {
+    const b = req.body || {};
+
+    const amountCents = Math.max(1, Number(b.amount || 0)) * 100;
+    const basket = Boolean(b.basket);
+
+    // generate code: GC-XXXXXXXX
+    const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+    const giftCode = `GC-${rand}`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      billing_address_collection: "required",
+      phone_number_collection: { enabled: true },
+      automatic_tax: { enabled: false }, // no tax on gift cards
+      allow_promotion_codes: true,
+      customer_email: b.buyer_email,
+
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: amountCents + (basket ? 12500 : 0),
+          product_data: {
+            name: "Gift Card",
+            description: `Gift Card for ${b.recipient_name || "Recipient"}`
+          }
+        }
+      }],
+
+      success_url: `${process.env.SITE_URL}/giftcard-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_URL}/giftcards#cancel`,
+
+      metadata: {
+        giftcard: "yes",
+        code: giftCode,
+        amount_cents: String(amountCents),
+        buyer_name: b.buyer_name || "",
+        buyer_email: b.buyer_email || "",
+        recipient_name: b.recipient_name || "",
+        recipient_email: b.recipient_email || "",
+        message: b.message || "",
+        deliver_on: b.deliver_on || "",
+        basket: basket ? "yes" : "no"
+      }
+    });
+
+    res.json({ url: session.url });
+
+  } catch (err) {
+    console.error("Gift card checkout error:", err);
+    res.status(500).json({ error: "Unable to create gift card checkout." });
   }
 });
 
@@ -760,7 +898,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
     const { date, name, email } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); // ✅ day, not year
+    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); // day not year
 
     const r = await pool.query(
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
@@ -827,6 +965,21 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   } catch (e) {
     console.error("list-bookings error:", e);
     res.status(200).json([]); // stay green
+  }
+});
+
+// ----------------- Admin: Gift Cards -----------------
+app.get("/__admin/giftcards", requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT *
+         FROM gift_cards
+        ORDER BY created_at DESC`
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error("Admin giftcards error:", e);
+    res.status(500).json({ error: "failed" });
   }
 });
 
@@ -921,6 +1074,13 @@ app.get("/admin", (_req, res) => {
       <div class="list" id="events"></div>
     </div>
   </div>
+
+  <!-- Gift Cards Card (PATCH 4) -->
+  <div class="card" style="margin-top:16px">
+    <div class="head">Gift Cards</div>
+    <div class="list" id="giftcards"></div>
+  </div>
+
 </div>
 
 <script>
@@ -1099,18 +1259,15 @@ app.get("/admin", (_req, res) => {
         const row = document.createElement("div");
         row.className = "evtrow";
 
-        // Title + date/location
         const c1 = document.createElement("div");
         const d = (ev.dateISO||"").slice(0,10);
         c1.innerHTML = \`<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
                         <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>\`;
 
-        // Seats
         const c2 = document.createElement("div");
         const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
         c2.innerHTML = \`<span class="badge">Sold \${sold} / \${cap}</span>\`;
 
-        // Quick –1 / +1
         const c3 = document.createElement("div"); c3.className = "btns";
         const minus = document.createElement("button"); minus.className = "secondary"; minus.textContent = "–1";
         const plus  = document.createElement("button"); plus.className  = "secondary"; plus.textContent  = "+1";
@@ -1118,7 +1275,6 @@ app.get("/admin", (_req, res) => {
         plus.addEventListener("click",  ()=> adjustSold(ev.id, +1));
         c3.append(minus, plus);
 
-        // Custom delta
         const c4 = document.createElement("div"); c4.className = "btns";
         const inp = document.createElement("input"); inp.className="spin"; inp.type="number"; inp.value="1";
         inp.min="-10"; inp.max="10"; inp.step="1";
@@ -1137,7 +1293,67 @@ app.get("/admin", (_req, res) => {
     }
   }
 
-  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); }
+  // ======================================================
+  // ==========  GIFT CARDS ADMIN LOADER (PATCH 4) ==========
+  // ======================================================
+  async function loadGiftCards(){
+    const wrap = document.getElementById("giftcards");
+    wrap.innerHTML = "";
+
+    try{
+      const list = await getJSON("/__admin/giftcards");
+      if(!Array.isArray(list) || list.length === 0){
+        wrap.innerHTML = '<div class="empty">No gift cards yet.</div>';
+        return;
+      }
+
+      list.forEach(gc=>{
+        const row = document.createElement("div");
+        row.className = "rowb";
+        row.style.gridTemplateColumns = "140px 1fr 140px 120px 100px";
+
+        row.innerHTML = `
+          <div>
+            <div style="font-weight:700">${gc.code}</div>
+            <div class="small">${new Date(gc.created_at).toLocaleDateString()}</div>
+          </div>
+
+          <div>
+            <div style="font-weight:600">${gc.buyer_name || "—"}</div>
+            <div class="small">${gc.buyer_email || ""}</div>
+          </div>
+
+          <div>
+            <div>$${(gc.amount_cents/100).toFixed(2)}</div>
+            ${gc.basket ? `<div class="small">Basket ✓</div>` : ""}
+          </div>
+
+          <div>
+            <div>${gc.recipient_name || "—"}</div>
+            <div class="small">${gc.recipient_email || ""}</div>
+          </div>
+
+          <div>${gc.status}</div>
+        `;
+        wrap.appendChild(row);
+      });
+
+    }catch(e){
+      wrap.innerHTML = '<div class="empty" style="color:red">Error loading gift cards.</div>';
+    }
+  }
+
+  // ======================================================
+  // ==============  LOAD EVERYTHING (PATCHED) =============
+  // ======================================================
+  async function loadAll(){
+    await Promise.all([
+      loadBookings(),
+      loadBlackouts(),
+      loadEventsAdmin(),
+      loadGiftCards()     // 🔥 added
+    ]);
+  }
   loadAll();
 
   // Add blackout actions
