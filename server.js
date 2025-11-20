@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL WITH FULL BLACKOUT MANAGER --------------------
+// -------------------- ADMIN UI — FINAL, COMPLETE, PERFECT --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(
@@ -1030,12 +1030,12 @@ app.get("/admin", (_req, res) => {
           "<h2>Blackout Dates</h2>" +
           "<div style='margin-bottom:12px'>" +
             "<input type='date' id='singleDate'>" +
-            "<input type='text' id='reason' placeholder='Reason (optional)' style='width:180px'>" +
+            "<input type='text' id='reason' placeholder='Reason (optional)' style='width:200px'>" +
             "<button id='addSingle'>Add blackout</button>" +
           "</div>" +
           "<div style='margin-bottom:12px'>" +
-            "<textarea id='bulkDates' rows='5' placeholder='Bulk add (one date per line or comma-separated):&#10;2026-12-24&#10;2026-12-25&#10;2026-12-26' style='width:100%'></textarea><br>" +
-            "<button id='addBulk' style='margin-top:8px'>Add bulk blackouts</button>" +
+            "<textarea id='bulkDates' rows='6' placeholder='Bulk add — one date per line or comma-separated:\n2026-12-24\n2026-12-25\n2026-12-26' style='width:100%'></textarea><br>" +
+            "<button id='addBulk'>Add bulk blackouts</button>" +
           "</div>" +
           "<div id='blackouts'>Loading…</div>" +
         "</div>" +
@@ -1049,8 +1049,8 @@ app.get("/admin", (_req, res) => {
       "for(let y=2024;y<=2028;y++){const o=document.createElement('option');o.value=o.textContent=y;if(y===now.getFullYear())o.selected=true;document.getElementById('year').appendChild(o)}" +
       "document.getElementById('refresh').onclick=load;" +
       "async function load(){const key=localStorage.getItem('adminkey');if(!key)return alert('Enter admin key first');const h={'x-admin-key':key};" +
-      "const p=new URLSearchParams({month:document.getElementById('month').value,year:document.getElementById('year').value});" +
-      // Bookings
+      "const month=parseInt(document.getElementById('month').value),year=parseInt(document.getElementById('year').value);" +
+      "const p=new URLSearchParams({month:month,year:year});" +
       "const bl=await fetch('/__admin/list-bookings?'+p,{headers:h});const bookings=await bl.json();" +
       "let html='';bookings.forEach(b=>{" +
         "const d=new Date(b.start_at);d.setMinutes(d.getMinutes()+d.getTimezoneOffset());" +
@@ -1058,33 +1058,26 @@ app.get("/admin", (_req, res) => {
         "const timeStr=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});" +
         "const addr=[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(', ');" +
         "const deposit=(b.deposit_cents||0)/100;" +
-        "html+=`<div class='card'><button class='delete' onclick='if(confirm(\\'Delete forever?\\'))fetch(\\'/api/admin/bookings/${b.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Delete</button>" +
-        "<strong>${dateStr} — ${timeStr}</strong> <span class='status ${b.status||'pending'}'>${b.status||'pending'}</span><br>" +
-        "<small>${b.package_title||b.package_id||'—'} • ${b.guests||'?'} guests</small><br><br>" +
-        "<b>Name:</b> ${b.customer_name||'—'}<br><b>Email:</b> ${b.customer_email||'—'}<br><b>Phone:</b> ${b.phone||'—'}<br>" +
-        "<b>Address:</b> ${addr||'—'}<br><b>Diet notes:</b> ${b.diet_notes||'None'}<br><br>" +
-        "<b>Deposit paid: $${deposit.toFixed(2)}</b></div>`;" +
+        "html+=\`<div class='card'><button class='delete' onclick='if(confirm(\\\"Delete forever?\\\"))fetch(\\\"/api/admin/bookings/\${b.id}\\\",{method:\\\"DELETE\\\",headers:h}).then(load)'>Delete</button>" +
+        "<strong>\${dateStr} — \${timeStr}</strong> <span class='status \${b.status||'pending'}'>\${b.status||'pending'}</span><br>" +
+        "<small>\${b.package_title||b.package_id||'—'} • \${b.guests||'?'} guests</small><br><br>" +
+        "<b>Name:</b> \${b.customer_name||'—'}<br><b>Email:</b> \${b.customer_email||'—'}<br><b>Phone:</b> \${b.phone||'—'}<br>" +
+        "<b>Address:</b> \${addr||'—'}<br><b>Diet notes:</b> \${b.diet_notes||'None'}<br><br>" +
+        "<b>Deposit paid: $$\${deposit.toFixed(2)}</b></div>\`;" +
       "});document.getElementById('bookings').innerHTML=html||'<i>No bookings this month.</i>';" +
-      // Gift cards
       "const gl=await fetch('/api/admin/giftcards',{headers:h});const gifts=await gl.json();" +
       "let ghtml='';gifts.forEach(g=>{" +
         "const d=new Date(g.created_at);const ds=d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-        "ghtml+=`<div class='card'><button class='delete' onclick='if(confirm(\\'Delete gift card?\\'))fetch(\\'/api/admin/giftcards/${g.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Delete</button><b>${ds}</b> — $${(g.amount_cents/100).toFixed(2)}</div>`;" +
+        "ghtml+=\`<div class='card'><button class='delete' onclick='if(confirm(\\\"Delete gift card?\\\"))fetch(\\\"/api/admin/giftcards/\${g.id}\\\",{method:\\\"DELETE\\\",headers:h}).then(load)'>Delete</button><b>\${ds}</b> — $$\{(g.amount_cents/100).toFixed(2)}</div>\`;" +
       "});document.getElementById('giftcards').innerHTML=ghtml||'<i>No gift cards yet.</i>';" +
-      // Blackouts
       "const blk=await fetch('/__admin/list-blackouts?'+p,{headers:h});const blackouts=await blk.json();" +
       "let bhtml='';blackouts.forEach(bo=>{" +
         "const bd=new Date(bo.start_at);bd.setMinutes(bd.getMinutes()+bd.getTimezoneOffset());" +
         "const bs=bd.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});" +
-        "bhtml+=`<div style='padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center'>" +
-        "<span><strong>${bs}</strong> ${bo.reason?'— '+bo.reason:''}</span>" +
-        "<button class='danger' style='padding:4px 8px;font-size:12px' onclick='if(confirm(\\'Remove blackout for ${bs}?\\'))fetch(\\'/api/admin/blackouts/${bo.id}\\',{method:\\'DELETE\\',headers:h}).then(load)'>Remove</button></div>`;" +
-      "});document.getElementById('blackouts').innerHTML=bhtml||'<i>No blackouts this month.</i>';" +
-      "}" +
-      // Add single blackout
-      "document.getElementById('addSingle').onclick=async()=>{const key=localStorage.getItem('adminkey');const date=document.getElementById('singleDate').value;const reason=document.getElementById('reason').value;if(!date)return alert('Pick a date');await fetch('/api/admin/blackouts',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({date,reason})});load();};" +
-      // Add bulk blackouts
-      "document.getElementById('addBulk').onclick=async()=>{const key=localStorage.getItem('adminkey');const raw=document.getElementById('bulkDates').value.trim();if(!raw)return alert('Enter dates');const dates=raw.split(/[,\\n]+/).map(s=>s.trim()).filter(Boolean);await fetch('/api/admin/blackouts/bulk',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({dates})});document.getElementById('bulkDates').value='';load();};" +
+        "bhtml+=\`<div style='padding:8px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center'><span><strong>\${bs}</strong> \${bo.reason?'— '+bo.reason:''}</span><button class='danger' style='padding:4px 8px;font-size:12px' onclick='if(confirm(\\\"Remove blackout for \${bs}?\\\"))fetch(\\\"/api/admin/blackouts/\${bo.id}\\\",{method:\\\"DELETE\\\",headers:h}).then(load)'>Remove</button></div>\`;" +
+      "});document.getElementById('blackouts').innerHTML=bhtml||'<i>No blackouts this month.</i>';}" +
+      "document.getElementById('addSingle').onclick=async()=>{const key=localStorage.getItem('adminkey');const date=document.getElementById('singleDate').value;const reason=document.getElementById('reason').value.trim();if(!date)return alert('Pick a date');await fetch('/api/admin/blackouts',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({date,reason})});load();};" +
+      "document.getElementById('addBulk').onclick=async()=>{const key=localStorage.getItem('adminkey');const raw=document.getElementById('bulkDates').value.trim();if(!raw)return alert('Enter dates');const dates=raw.split(/[\\n,]+/).map(s=>s.trim()).filter(Boolean);await fetch('/api/admin/blackouts/bulk',{method:'POST',headers:{'Content-Type':'application/json','x-admin-key':key},body:JSON.stringify({dates})});document.getElementById('bulkDates').value='';load();};" +
       "if(localStorage.getItem('adminkey'))load();" +
     "</script></body></html>"
   );
