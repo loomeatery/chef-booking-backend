@@ -808,13 +808,14 @@ app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
     const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
     const reason = (req.body?.reason || "").trim();
     if (dates.length === 0) return res.status(400).json({ error: "Provide dates: string[] YYYY-MM-DD" });
-    if (dates.length > 365)  return res.status(400).json({ error: "Too many dates (limit 365 per request)." });
+    if (dates.length > 365) return res.status(400).json({ error: "Too many dates (limit 365 per request)." });
 
     const starts = [], ends = [];
     for (const d of dates) {
       const start = new Date(`${d}T00:00:00.000Z`);
       if (isNaN(start)) return res.status(400).json({ error: `Invalid date: ${d}` });
-      const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 1);
       starts.push(start.toISOString());
       ends.push(end.toISOString());
     }
@@ -844,8 +845,8 @@ app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
       const r = await client.query(sql, params);
       await client.query("COMMIT");
 
-      const inserted = r.rows.filter(row => row.inserted === true).length;
-      const updated  = r.rows.length - inserted;
+      const inserted = r.rows.filter((row) => row.inserted === true).length;
+      const updated = r.rows.length - inserted;
       return res.json({ ok: true, inserted, updated });
     } catch (e) {
       await client.query("ROLLBACK");
@@ -864,8 +865,10 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
   try {
     const { date, reason } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
+
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
 
     const r = await pool.query(
       `INSERT INTO blackout_dates (start_at, end_at, reason)
@@ -876,6 +879,7 @@ app.post("/api/admin/blackouts", requireAdmin, async (req, res) => {
        RETURNING id,start_at,end_at,reason`,
       [start.toISOString(), end.toISOString(), (reason || "").trim() || null]
     );
+
     res.json(r.rows[0]);
   } catch (e) {
     console.error(e);
@@ -893,12 +897,15 @@ app.delete("/api/admin/blackouts/:id", requireAdmin, async (req, res) => {
   }
 });
 
+// ----------------- Admin: create booking -----------------
 app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   try {
     const { date, name, email } = req.body || {};
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
+
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); // day not year
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
 
     const r = await pool.query(
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
@@ -906,6 +913,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
        RETURNING id,start_at,end_at,status,customer_name,customer_email`,
       [start.toISOString(), end.toISOString(), name || "", email || ""]
     );
+
     res.json(r.rows[0]);
   } catch (e) {
     console.error(e);
@@ -913,6 +921,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   }
 });
 
+// ----------------- Admin: delete booking -----------------
 app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   try {
     await pool.query(`DELETE FROM bookings WHERE id=$1`, [req.params.id]);
@@ -926,10 +935,13 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
 // ----------------- Admin list pages (JSON for admin UI) -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
-    const year = Number(req.query.year), month = Number(req.query.month);
+    const year = Number(req.query.year),
+      month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
-    const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+
+    const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+    const end = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+
     const r = await pool.query(
       `SELECT id,start_at,end_at,reason,created_at
          FROM blackout_dates
@@ -937,19 +949,23 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
         ORDER BY start_at ASC`,
       [start.toISOString(), end.toISOString()]
     );
+
     res.status(200).json(r.rows);
   } catch (e) {
     console.error("list-blackouts error:", e);
-    res.status(200).json([]); // stay green
+    res.status(200).json([]);
   }
 });
 
 app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   try {
-    const year = Number(req.query.year), month = Number(req.query.month);
+    const year = Number(req.query.year),
+      month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
-    const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+
+    const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
+    const end = new Date(Date.UTC(year, month, 1, 0, 0, 0));
+
     const r = await pool.query(
       `SELECT id,start_at,end_at,status,customer_name,customer_email,
               package_title, guests,
@@ -961,10 +977,11 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
         ORDER BY start_at ASC`,
       [start.toISOString(), end.toISOString()]
     );
+
     res.status(200).json(r.rows);
   } catch (e) {
     console.error("list-bookings error:", e);
-    res.status(200).json([]); // stay green
+    res.status(200).json([]);
   }
 });
 
@@ -1089,7 +1106,6 @@ app.get("/admin", (_req, res) => {
   const $ = (id) => document.getElementById(id);
   const toast = (t, ok) => { const el=$("toast"); el.textContent=t||""; el.className= ok===true?"ok": ok===false?"bad":""; };
 
-  // UTC-safe date renderers (avoid TZ drift)
   function dUTC(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d)+", "+y; }
   function dMD(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d); }
   const usd = (c) => (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});
@@ -1107,7 +1123,6 @@ app.get("/admin", (_req, res) => {
     try { return await r.json(); } catch { return []; }
   }
 
-  // Init month/year
   (function(){
     const mSel = $("mSel"), ySel=$("ySel");
     for(let i=1;i<=12;i++){
@@ -1124,7 +1139,6 @@ app.get("/admin", (_req, res) => {
     mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());
   })();
 
-  // Key field
   $("admKey").value = localStorage.getItem("chef_admin_key") || "";
   $("saveKey").addEventListener("click", ()=>{ localStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved ✓", true); });
   $("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
@@ -1132,7 +1146,7 @@ app.get("/admin", (_req, res) => {
   $("refresh").addEventListener("click", ()=> loadAll());
 
   async function deleteBooking(id){
-    if(!confirm("Delete this booking? (Use with care)")) return;
+    if(!confirm("Delete this booking?")) return;
     const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
     if(r.status===401){ toast("Unauthorized — check your key", false); return; }
     if(r.ok){ toast("Booking deleted ✓", true); loadBookings(); }
@@ -1161,7 +1175,8 @@ app.get("/admin", (_req, res) => {
 
         const meta=document.createElement("div"); meta.className="meta";
         const left=document.createElement("div");
-        left.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Address</div>'
+        left.innerHTML =
+          '<div style="font-weight:800;margin-bottom:6px">Address</div>'
           + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
           + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
           + '<div class="small">'+(b.phone||"—")+'</div>'
@@ -1193,8 +1208,8 @@ app.get("/admin", (_req, res) => {
     try{
       const data = await getJSON("/__admin/list-blackouts?year="+y+"&month="+m);
       if(!Array.isArray(data)||data.length===0){
-        const div=document.createElement("div"); div.className="empty"; div.textContent="No blackouts this month.";
-        wrap.appendChild(div); return;
+        wrap.innerHTML='<div class="empty">No blackouts this month.</div>';
+        return;
       }
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb"; row.style.gridTemplateColumns="1fr 1fr 100px";
@@ -1214,17 +1229,12 @@ app.get("/admin", (_req, res) => {
       });
       toast("");
     }catch(e){
-      if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
-        wrap.appendChild(div); toast("Unauthorized — check your key", false);
-      }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading blackouts.";
-        wrap.appendChild(div); toast("Error loading blackouts", false);
-      }
+      wrap.innerHTML='<div class="empty" style="color:red">Error loading blackouts.</div>';
+      toast("Error loading blackouts", false);
     }
   }
 
-  // ---------- Pop-Up Events Admin ----------
+  // ---------- Pop-Up Events ----------
   async function adjustSold(eventId, delta){
     try{
       const r = await fetch("/api/admin/events/"+encodeURIComponent(eventId)+"/adjust-sold", {
@@ -1249,118 +1259,111 @@ app.get("/admin", (_req, res) => {
     try{
       const list = await (await fetch("/api/events")).json();
       if (!Array.isArray(list) || list.length === 0) {
-        const div = document.createElement("div");
-        div.className = "empty";
-        div.textContent = "No visible pop-up events.";
-        wrap.appendChild(div);
+        wrap.innerHTML='<div class="empty">No visible pop-up events.</div>';
         return;
       }
+
       list.forEach(ev=>{
         const row = document.createElement("div");
         row.className = "evtrow";
 
         const c1 = document.createElement("div");
         const d = (ev.dateISO||"").slice(0,10);
-        c1.innerHTML = \`<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
-                        <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>\`;
+
+        c1.innerHTML =
+          `<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
+           <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>`;
 
         const c2 = document.createElement("div");
         const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
-        c2.innerHTML = \`<span class="badge">Sold \${sold} / \${cap}</span>\`;
 
-        const c3 = document.createElement("div"); c3.className = "btns";
-        const minus = document.createElement("button"); minus.className = "secondary"; minus.textContent = "–1";
-        const plus  = document.createElement("button"); plus.className  = "secondary"; plus.textContent  = "+1";
+        c2.innerHTML = `<span class="badge">Sold \${sold} / \${cap}</span>`;
+
+        const c3=document.createElement("div"); c3.className="btns";
+        const minus=document.createElement("button"); minus.className="secondary"; minus.textContent="–1";
+        const plus=document.createElement("button"); plus.className="secondary"; plus.textContent="+1";
+
         minus.addEventListener("click", ()=> adjustSold(ev.id, -1));
         plus.addEventListener("click",  ()=> adjustSold(ev.id, +1));
-        c3.append(minus, plus);
+        c3.append(minus,plus);
 
-        const c4 = document.createElement("div"); c4.className = "btns";
-        const inp = document.createElement("input"); inp.className="spin"; inp.type="number"; inp.value="1";
-        inp.min="-10"; inp.max="10"; inp.step="1";
-        const apply = document.createElement("button"); apply.className="secondary"; apply.textContent="Apply ±";
-        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value || 0)));
-        c4.append(inp, apply);
+        const c4=document.createElement("div"); c4.className="btns";
+        const inp=document.createElement("input"); inp.className="spin"; inp.type="number"; inp.min="-10"; inp.max="10"; inp.value="1";
+        const apply=document.createElement("button"); apply.className="secondary"; apply.textContent="Apply ±";
+        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value||0)));
+        c4.append(inp,apply);
 
         row.append(c1,c2,c3,c4);
         wrap.appendChild(row);
       });
+
     }catch(e){
-      const div = document.createElement("div");
-      div.className = "empty"; div.style.color="var(--bad)";
-      div.textContent = "Error loading events.";
-      wrap.appendChild(div);
+      wrap.innerHTML='<div class="empty" style="color:red">Error loading events.</div>';
     }
   }
 
-  // ======================================================
-  // ==========  GIFT CARDS ADMIN LOADER (PATCH 4) ==========
-  // ======================================================
+  // ---------- GIFT CARDS (PATCH 4) ----------
   async function loadGiftCards(){
-    const wrap = document.getElementById("giftcards");
-    wrap.innerHTML = "";
+    const wrap=document.getElementById("giftcards");
+    wrap.innerHTML="";
 
     try{
       const list = await getJSON("/__admin/giftcards");
-      if(!Array.isArray(list) || list.length === 0){
-        wrap.innerHTML = '<div class="empty">No gift cards yet.</div>';
+      if(!Array.isArray(list)||list.length===0){
+        wrap.innerHTML='<div class="empty">No gift cards yet.</div>';
         return;
       }
 
       list.forEach(gc=>{
-        const row = document.createElement("div");
-        row.className = "rowb";
-        row.style.gridTemplateColumns = "140px 1fr 140px 120px 100px";
+        const row=document.createElement("div");
+        row.className="rowb";
+        row.style.gridTemplateColumns="140px 1fr 140px 120px 100px";
 
-        row.innerHTML = `
-          <div>
-            <div style="font-weight:700">${gc.code}</div>
-            <div class="small">${new Date(gc.created_at).toLocaleDateString()}</div>
-          </div>
+        row.innerHTML =
+          `<div>
+             <div style="font-weight:700">\${gc.code}</div>
+             <div class="small">\${new Date(gc.created_at).toLocaleDateString()}</div>
+           </div>
 
-          <div>
-            <div style="font-weight:600">${gc.buyer_name || "—"}</div>
-            <div class="small">${gc.buyer_email || ""}</div>
-          </div>
+           <div>
+             <div style="font-weight:600">\${gc.buyer_name || "—"}</div>
+             <div class="small">\${gc.buyer_email || ""}</div>
+           </div>
 
-          <div>
-            <div>$${(gc.amount_cents/100).toFixed(2)}</div>
-            ${gc.basket ? `<div class="small">Basket ✓</div>` : ""}
-          </div>
+           <div>
+             <div>$\${(gc.amount_cents/100).toFixed(2)}</div>
+             \${gc.basket ? '<div class="small">Basket ✓</div>' : ''}
+           </div>
 
-          <div>
-            <div>${gc.recipient_name || "—"}</div>
-            <div class="small">${gc.recipient_email || ""}</div>
-          </div>
+           <div>
+             <div>\${gc.recipient_name || "—"}</div>
+             <div class="small">\${gc.recipient_email || ""}</div>
+           </div>
 
-          <div>${gc.status}</div>
-        `;
+           <div>\${gc.status}</div>`;
+
         wrap.appendChild(row);
       });
 
     }catch(e){
-      wrap.innerHTML = '<div class="empty" style="color:red">Error loading gift cards.</div>';
+      wrap.innerHTML='<div class="empty" style="color:red">Error loading gift cards.</div>';
     }
   }
 
-  // ======================================================
-  // ==============  LOAD EVERYTHING (PATCHED) =============
-  // ======================================================
   async function loadAll(){
     await Promise.all([
       loadBookings(),
       loadBlackouts(),
       loadEventsAdmin(),
-      loadGiftCards()     // 🔥 added
+      loadGiftCards()
     ]);
   }
   loadAll();
 
-  // Add blackout actions
   $("bdAdd").addEventListener("click", async ()=>{
     const date=$("bdDate").value, reason=$("bdReason").value;
     if(!date){ toast("Pick a date", false); return; }
-    const r = await fetch(BASE+"/api/admin/blackouts",{method:"POST",headers:headers(),body:JSON.stringify({date,reason})});
+    const r=await fetch(BASE+"/api/admin/blackouts",{method:"POST",headers:headers(),body:JSON.stringify({date,reason})});
     if(r.status===401) return toast("Unauthorized — check your key", false);
     if(r.ok){ $("bdDate").value=""; $("bdReason").value=""; loadBlackouts(); toast("Blackout added ✓", true); }
     else toast("Add failed", false);
@@ -1378,6 +1381,7 @@ app.get("/admin", (_req, res) => {
 
 })();
 </script>
+
 </body></html>`);
 });
 
