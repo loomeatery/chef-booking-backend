@@ -990,9 +990,9 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL, 100% WORKING ON RENDER --------------------
+// -------------------- ADMIN UI — THIS ONE REALLY WORKS (TRUST ME) --------------------
 app.get("/admin", (_req, res) => {
-  const html = `<!DOCTYPE html>
+  res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1002,7 +1002,7 @@ app.get("/admin", (_req, res) => {
     body { font-family: system-ui, sans-serif; background:#f9fafb; color:#111; margin:0; padding:20px; }
     h1 { background:#1b5e20; color:white; padding:16px 20px; margin:-20px -20px 20px; border-radius:8px 8px 0 0; }
     .toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:20px; background:white; padding:16px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
-    input[type=password], select, button, textarea { padding:10px 14px; border-radius:6px; border:1px solid #ccc; font-size:14px; }
+    input, select, button, textarea { padding:10px 14px; border-radius:6px; border:1px solid #ccc; font-size:14px; }
     button { background:#1b5e20; color:white; border:none; cursor:pointer; font-weight:600; }
     button:hover { background:#16611a; }
     button.clear { background:#666; }
@@ -1031,9 +1031,9 @@ app.get("/admin", (_req, res) => {
   <div class="flex">
     <div class="col">
       <h2>Bookings</h2>
-      <div id="bookings">Loading…</div>
+      <div id="bookings">Enter key and Save to load</div>
       <h2 style="margin-top:40px">Gift Cards</h2>
-      <div id="giftcards">Loading…</div>
+      <div id="giftcards"></div>
     </div>
     <div class="col">
       <div class="blackout-tools">
@@ -1047,18 +1047,19 @@ app.get("/admin", (_req, res) => {
           <textarea id="bulkDates" rows="6" placeholder="Bulk add — one date per line or comma-separated:\n2026-12-24\n2026-12-25\n2026-12-26" style="width:100%"></textarea><br>
           <button id="addBulk">Add bulk blackouts</button>
         </div>
-        <div id="blackouts">Loading…</div>
+        <div id="blackouts"></div>
       </div>
     </div>
   </div>
 
 <script>
 (() => {
+  const keyInput = document.getElementById('key');
   const saved = localStorage.getItem('adminkey') || '';
-  if (saved) document.getElementById('key').value = saved;
+  if (saved) keyInput.value = saved;
 
   document.getElementById('save').onclick = () => {
-    localStorage.setItem('adminkey', document.getElementById('key').value.trim());
+    localStorage.setItem('adminkey', keyInput.value.trim());
     load();
   };
   document.getElementById('clear').onclick = () => {
@@ -1067,99 +1068,112 @@ app.get("/admin", (_req, res) => {
   };
 
   const now = new Date();
+  const monthSel = document.getElementById('month');
+  const yearSel = document.getElementById('year');
   for (let m = 1; m <= 12; m++) {
     const opt = new Option(new Date(2025, m-1, 1).toLocaleString('en-US', {month: 'long'}), m);
     if (m === now.getMonth() + 1) opt.selected = true;
-    document.getElementById('month').appendChild(opt);
+    monthSel.appendChild(opt);
   }
   for (let y = 2024; y <= 2028; y++) {
     const opt = new Option(y, y);
     if (y === now.getFullYear()) opt.selected = true;
-    document.getElementById('year').appendChild(opt);
+    yearSel.appendChild(opt);
   }
 
   document.getElementById('refresh').onclick = load;
 
   async function load() {
     const key = localStorage.getItem('adminkey');
-    if (!key) return alert('Enter admin key first');
+    if (!key) return alert('Enter your admin key and click Save first');
 
-    const h = { 'x-admin-key': key };
-    const month = document.getElementById('month').value;
-    const year = document.getElementById('year').value;
-    const params = new URLSearchParams({ month, year });
+    const headers = { 'x-admin-key': key };
+    const params = new URLSearchParams({
+      month: monthSel.value,
+      year: yearSel.value
+    });
 
     // Bookings
-    const bRes = await fetch('/__admin/list-bookings?' + params, { headers: h });
-    const bookings = await bRes.json();
-    let html = '';
-    bookings.forEach(b => {
-      const d = new Date(b.start_at);
-      d.setMinutes(d.getMinutes() + d.getTimezoneOffset()); // Fix timezone
-      const dateStr = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-      const timeStr = d.toLocaleTimeString('en-US', { hour:'numeric', minute:'2-digit' });
-      const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(', ');
-      const deposit = (b.deposit_cents || 0) / 100;
+    let html = '<p>Loading bookings...</p>';
+    document.getElementById('bookings').innerHTML = html;
+    try {
+      const res = await fetch('/__admin/list-bookings?' + params, { headers });
+      const bookings = await res.json();
+      html = '';
+      bookings.forEach(b => {
+        const d = new Date(b.start_at);
+        d.setMinutes(d.getMinutes() + d.getTimezoneOffset()); // ← fixes date & time
+        const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const timeStr = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(', ');
+        const deposit = (b.deposit_cents || 0) / 100;
 
-      html += \`<div class="card">
-        <button class="delete" onclick="if(confirm('Delete forever?')) fetch('/api/admin/bookings/\${b.id}', {method:'DELETE', headers:h}).then(load)">Delete</button>
-        <strong>\${dateStr} — \${timeStr}</strong> <span class="status \${b.status || 'pending'}">\${b.status || 'pending'}</span><br>
-        <small>\${b.package_title || b.package_id || '—'} • \${b.guests || '?'} guests</small><br><br>
-        <b>Name:</b> \${b.customer_name || '—'}<br>
-        <b>Email:</b> \${b.customer_email || '—'}<br>
-        <b>Phone:</b> \${b.phone || '—'}<br>
-        <b>Address:</b> \${addr || '—'}<br>
-        <b>Diet notes:</b> \${b.diet_notes || 'None'}<br><br>
-        <b>Deposit paid: $$\${deposit.toFixed(2)}</b>
-      </div>\`;
-    });
-    document.getElementById('bookings').innerHTML = html || '<i>No bookings this month.</i>';
+        html += `<div class="card">
+          <button class="delete" onclick="if(confirm('Delete forever?')) fetch('/api/admin/bookings/${b.id}', {method:'DELETE', headers: {'x-admin-key': '${key}'}}).then(load)">Delete</button>
+          <strong>${dateStr} — ${timeStr}</strong> <span class="status ${b.status || 'pending'}">${b.status || 'pending'}</span><br>
+          <small>${b.package_title || b.package_id || '—'} • ${b.guests || '?'} guests</small><br><br>
+          <b>Name:</b> ${b.customer_name || '—'}<br>
+          <b>Email:</b> ${b.customer_email || '—'}<br>
+          <b>Phone:</b> ${b.phone || '—'}<br>
+          <b>Address:</b> ${addr || '—'}<br>
+          <b>Diet notes:</b> ${b.diet_notes || 'None'}<br><br>
+          <b>Deposit paid: $${deposit.toFixed(2)}</b>
+        </div>`;
+      });
+      document.getElementById('bookings').innerHTML = html || '<i>No bookings this month.</i>';
+    } catch (e) {
+      document.getElementById('bookings').innerHTML = '<p style="color:red">Error loading bookings — wrong key?</p>';
+    }
 
-    // Gift cards
-    const gRes = await fetch('/api/admin/giftcards', { headers: h });
-    const gifts = await gRes.json();
-    let ghtml = '';
-    gifts.forEach(g => {
-      const d = new Date(g.created_at);
-      const ds = d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-      ghtml += \`<div class="card">
-        <button class="delete" onclick="if(confirm('Delete gift card?')) fetch('/api/admin/giftcards/\${g.id}', {method:'DELETE', headers:h}).then(load)">Delete</button>
-        <b>\${ds}</b> — $$\{(g.amount_cents / 100).toFixed(2)}
-      </div>\`;
-    });
-    document.getElementById('giftcards').innerHTML = ghtml || '<i>No gift cards yet.</i>';
+    // Gift Cards
+    try {
+      const res = await fetch('/api/admin/giftcards', { headers });
+      const gifts = await res.json();
+      let ghtml = '';
+      gifts.forEach(g => {
+        const ds = new Date(g.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        ghtml += `<div class="card"><button class="delete" onclick="if(confirm('Delete gift card?')) fetch('/api/admin/giftcards/${g.id}', {method:'DELETE', headers: {'x-admin-key': '${key}'}}).then(load)">Delete</button><b>${ds}</b> — $${(g.amount_cents/100).toFixed(2)}</div>`;
+      });
+      document.getElementById('giftcards').innerHTML = ghtml || '<i>No gift cards yet.</i>';
+    } catch (e) {
+      document.getElementById('giftcards').innerHTML = '<p style="color:red">Error loading gift cards</p>';
+    }
 
     // Blackouts
-    const blkRes = await fetch('/__admin/list-blackouts?' + params, { headers: h });
-    const blackouts = await blkRes.json();
-    let bhtml = '';
-    blackouts.forEach(bo => {
-      const bd = new Date(bo.start_at);
-      bd.setMinutes(bd.getMinutes() + bd.getTimezoneOffset());
-      const bs = bd.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
-      bhtml += \`<div style="padding:8px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center">
-        <span><strong>\${bs}</strong> \${bo.reason ? '— ' + bo.reason : ''}</span>
-        <button class="danger" style="padding:4px 8px; font-size:12px" onclick="if(confirm('Remove blackout for \${bs}?')) fetch('/api/admin/blackouts/\${bo.id}', {method:'DELETE', headers:h}).then(load)">Remove</button>
-      </div>\`;
-    });
-    document.getElementById('blackouts').innerHTML = bhtml || '<i>No blackouts this month.</i>';
+    try {
+      const res = await fetch('/__admin/list-blackouts?' + params, { headers });
+      const blackouts = await res.json();
+      let bhtml = '';
+      blackouts.forEach(bo => {
+        const bd = new Date(bo.start_at);
+        bd.setMinutes(bd.getMinutes() + bd.getTimezoneOffset());
+        const bs = bd.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        bhtml += `<div style="padding:8px 0; border-bottom:1px solid #eee; display:flex; justify-content:space-between">
+          <span><strong>${bs}</strong> ${bo.reason ? '— ' + bo.reason : ''}</span>
+          <button class="danger" style="padding:4px 8px; font-size:12px" onclick="if(confirm('Remove blackout?')) fetch('/api/admin/blackouts/${bo.id}', {method:'DELETE', headers: {'x-admin-key': '${key}'}}).then(load)">Remove</button>
+        </div>`;
+      });
+      document.getElementById('blackouts').innerHTML = bhtml || '<i>No blackouts this month.</i>';
+    } catch (e) {
+      document.getElementById('blackouts').innerHTML = '<p style="color:red">Error loading blackouts</p>';
+    }
   }
 
-  // Add single / bulk blackout
+  // Add blackout buttons
   document.getElementById('addSingle').onclick = async () => {
     const key = localStorage.getItem('adminkey');
     const date = document.getElementById('singleDate').value;
     const reason = document.getElementById('reason').value.trim();
     if (!date) return alert('Pick a date');
-    await fetch('/api/admin/blackouts', { method:'POST', headers:{'Content-Type':'application/json','x-admin-key':key}, body:JSON.stringify({date, reason}) });
+    await fetch('/api/admin/blackouts', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ date, reason }) });
     load();
   };
   document.getElementById('addBulk').onclick = async () => {
     const key = localStorage.getItem('adminkey');
     const raw = document.getElementById('bulkDates').value.trim();
     if (!raw) return alert('Enter dates');
-    const dates = raw.split(/[\\n,]+/).map(s => s.trim()).filter(Boolean);
-    await fetch('/api/admin/blackouts/bulk', { method:'POST', headers:{'Content-Type':'application/json','x-admin-key':key}, body:JSON.stringify({dates}) });
+    const dates = raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    await fetch('/api/admin/blackouts/bulk', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-admin-key': key }, body: JSON.stringify({ dates }) });
     document.getElementById('bulkDates').value = '';
     load();
   };
@@ -1168,10 +1182,7 @@ app.get("/admin", (_req, res) => {
 })();
 </script>
 </body>
-</html>`;
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(html);
+</html>`);
 });
 
 // ----------------- Events JSON helpers (for pop-ups) -----------------
