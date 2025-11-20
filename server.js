@@ -990,7 +990,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI (OLD LIST LAYOUT, FIXED WITH ESCAPED BACKTICKS) --------------------
+// -------------------- ADMIN UI (FULLY FIXED + KEY PROTECTION RESTORED) --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!DOCTYPE html>
@@ -1003,163 +1003,202 @@ app.get("/admin", (_req, res) => {
 <style>
   body { font-family: Inter, sans-serif; background:#f6f7f6; margin:0; padding:20px; color:#1c1c1c; }
   h1 { font-size:22px; margin-bottom:10px; }
-  .controls { display:flex; gap:10px; margin-bottom:20px; }
-  select, input { padding:6px 8px; border-radius:6px; border:1px solid #ccc; }
-  .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; }
-  .delete-btn { background:#c62828; color:white; border:0; padding:8px 12px; border-radius:6px; font-weight:600; float:right; cursor:pointer; }
-  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; display:inline-block; margin-left:8px; }
+  .controls { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
+  select, input, button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
+  button { background:#1b5e20; color:white; cursor:pointer; }
+  button.clear { background:#666; }
+  .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; position:relative; }
+  .delete-btn { background:#c62828; color:white; border:0; padding:6px 12px; border-radius:6px; font-weight:600; position:absolute; top:16px; right:16px; cursor:pointer; }
+  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; display:inline-block; }
   .muted { color:#666; font-size:14px; }
-  .section-title { font-size:18px; margin-top:30px; margin-bottom:10px; font-weight:700; }
+  .section-title { font-size:18px; margin:30px 0 10px; font-weight:700; }
+  .locked { filter: blur(8px); pointer-events:none; user-select:none; }
 </style>
 </head>
-
 <body>
   <h1>Private Chef Christopher LaMagna Database</h1>
 
   <div class="controls">
-    <select id="month"></select>
+    <input type="password" id="adminKey" placeholder="Admin key" style="flex:1;min-width:200px;" />
+    <button id="saveKey">Save</button>
+    <button id="clearKey" class="clear">Clear</button>
+    <select id="month" style="margin-left:auto;"></select>
     <select id="year"></select>
     <button id="refreshBtn">Refresh</button>
   </div>
 
-  <div class="section-title">Bookings</div>
-  <div id="bookings">Loading…</div>
+  <div id="content" class="locked">
+    <div class="section-title">Bookings</div>
+    <div id="bookings">Locked — enter admin key above</div>
 
-  <div class="section-title">Gift Cards</div>
-  <div id="giftcards">Loading…</div>
+    <div class="section-title">Gift Cards</div>
+    <div id="giftcards">Locked — enter admin key above</div>
+  </div>
 
 <script>
 (function(){
-
-  const monthEl = document.getElementById("month");
-  const yearEl  = document.getElementById("year");
+  const keyInput = document.getElementById("adminKey");
+  const saveBtn = document.getElementById("saveKey");
+  const clearBtn = document.getElementById("clearKey");
+  const content = document.getElementById("content");
   const bookingsEl = document.getElementById("bookings");
-  const giftEl     = document.getElementById("giftcards");
+  const giftEl = document.getElementById("giftcards");
+  const monthEl = document.getElementById("month");
+  const yearEl = document.getElementById("year");
 
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const years = [currentYear, currentYear+1, currentYear+2];
-
-  for (let m = 1; m <= 12; m++) {
-    const o = document.createElement("option");
-    o.value = m;
-    o.textContent = new Date(currentYear, m-1, 1).toLocaleString("en-US", { month:"long" });
-    if (m === now.getMonth()+1) o.selected = true;
-    monthEl.appendChild(o);
+  // Load saved key
+  const savedKey = localStorage.getItem("adminKey") || "";
+  if (savedKey) {
+    keyInput.value = savedKey;
+    checkKey(savedKey);
   }
 
-  years.forEach(y=>{
-    const o = document.createElement("option");
-    o.value = y;
-    o.textContent = y;
-    if (y === currentYear) o.selected = true;
-    yearEl.appendChild(o);
-  });
+  saveBtn.onclick = () => {
+    const key = keyInput.value.trim();
+    localStorage.setItem("adminKey", key);
+    checkKey(key);
+  };
+
+  clearBtn.onclick = () => {
+    localStorage.removeItem("adminKey");
+    keyInput.value = "";
+    content.classList.add("locked");
+    bookingsEl.innerHTML = giftEl.innerHTML = "Locked — enter admin key above";
+  };
+
+  async function checkKey(key) {
+    if (!key) return;
+    const r = await fetch("/__admin/list-bookings?year=2025&month=1", {
+      headers: { "x-admin-key": key }
+    });
+    if (r.ok) {
+      content.classList.remove("locked");
+      loadData();
+    } else {
+      content.classList.add("locked");
+      alert("Wrong admin key");
+    }
+  }
+
+  // Populate month/year
+  const now = new Date();
+  const thisMonth = now.getMonth() + 1;
+  const thisYear = now.getFullYear();
+  for (let m = 1; m <= 12; m++) {
+    const opt = document.createElement("option");
+    opt.value = m;
+    opt.text = new Date(thisYear, m-1, 1).toLocaleString(" dage", { month: "long" });
+    if (m === thisMonth) opt.selected = true;
+    monthEl.appendChild(opt);
+  }
+  for (let y = thisYear-1; y <= thisYear+2; y++) {
+    const opt = document.createElement("option");
+    opt.value = opt.text = y;
+    if (y === thisYear) opt.selected = true;
+    yearEl.appendChild(opt);
+  }
 
   document.getElementById("refreshBtn").onclick = loadData;
 
-  // ----------------------- LOAD BOOKINGS -----------------------
   async function loadBookings(){
     bookingsEl.innerHTML = "Loading…";
-
-    const params = new URLSearchParams({
-      month: monthEl.value,
-      year: yearEl.value
+    const params = new URLSearchParams({ month: monthEl.value, year: yearEl.value });
+    const r = await fetch("/__admin/list-bookings?" + params, {
+      headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
     });
-
-    const r = await fetch("/__admin/list-bookings?" + params.toString());
     const list = await r.json();
 
-    if (!Array.isArray(list) || list.length === 0){
+    if (!Array.isArray(list) || list.length === 0) {
       bookingsEl.innerHTML = '<div class="muted">No bookings this month.</div>';
       return;
     }
 
-    bookingsEl.innerHTML = "";
+    let html = "";
     list.forEach(b => {
       const d = new Date(b.start_at);
       const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
       const timeStr = d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
 
-      const card = document.createElement("div");
-      card.className = "card";
-
-      card.innerHTML = \`
-        <button class="delete-btn" data-id="\${b.id}">Delete</button>
-        <div><strong>\${dateStr} — \${timeStr}</strong> <span class="status">\${b.status}</span></div>
-        <div class="muted">\${b.package_title || b.package_id} • \${b.guests} guests</div>
-        <br>
-        <div><strong>Name:</strong> \${b.customer_name}</div>
-        <div><strong>Email:</strong> \${b.customer_email}</div>
-        <div><strong>Phone:</strong> \${b.phone || "—"}</div>
-        <div><strong>Address:</strong> \${b.address_line1 || ""}, \${b.city || ""}, \${b.state || ""} \${b.zip || ""}</div>
-        <div><strong>Diet notes:</strong> \${b.diet_notes || "None"}</div>
-        <br>
-        <div><strong>$\${(b.subtotal_cents/100).toFixed(2)}</strong></div>
-      \`;
-
-      bookingsEl.appendChild(card);
+      html += '<div class="card">' +
+        '<button class="delete-btn" data-id="' + b.id + '">Delete</button>' +
+        '<div><strong>' + dateStr + ' — ' + timeStr + '</strong> <span class="status">' + (b.status || "unknown") + '</span></div>' +
+        '<div class="muted">' + (b.package_title || b.package_id || "—") + ' • ' + (b.guests || "?") + ' guests</div>' +
+        '<br>' +
+        '<div><strong>Name:</strong> ' + (b.customer_name || "—") + '</div>' +
+        '<div><strong>Email:</strong> ' + (b.customer_email || "—") + '</div>' +
+        '<div><strong>Phone:</strong> ' + (b.phone || "—") + '</div>' +
+        '<div><strong>Address:</strong> ' + [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(", ") + '</div>' +
+        '<div><strong>Diet notes:</strong> ' + (b.diet_notes || "None") + '</div>' +
+        '<br>' +
+        '<div><strong>$' + ((b.subtotal_cents || 0)/100).toFixed(2) + '</strong></div>' +
+      '</div>';
     });
+    bookingsEl.innerHTML = html;
 
-    document.querySelectorAll(".delete-btn").forEach(btn=>{
+    document.querySelectorAll(".delete-btn").forEach(btn => {
       btn.onclick = async () => {
-        if (!confirm("Delete this booking?")) return;
-        await fetch("/api/admin/bookings/" + btn.dataset.id, { method:"DELETE" });
-        loadBookings();
+        if (confirm("Delete this booking permanently?")) {
+          await fetch("/api/admin/bookings/" + btn.dataset.id, {
+            method: "DELETE",
+            headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
+          });
+          loadBookings();
+        }
       };
     });
   }
 
-  // ----------------------- LOAD GIFT CARDS -----------------------
   async function loadGiftCards(){
     giftEl.innerHTML = "Loading…";
-
-    const r = await fetch("/api/admin/giftcards");
+    const r = await fetch("/api/admin/giftcards", {
+      headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
+    });
     const list = await r.json();
 
-    if (!Array.isArray(list) || list.length === 0){
+    if (!list || list.length === 0) {
       giftEl.innerHTML = '<div class="muted">No gift cards sold yet.</div>';
       return;
     }
 
-    giftEl.innerHTML = "";
+    let html = "";
     list.forEach(g => {
-
       const d = new Date(g.created_at);
       const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-
-      const card = document.createElement("div");
-      card.className = "card";
-
-      card.innerHTML = \`
-        <button class="delete-btn" data-id="\${g.id}" data-type="gift">Delete</button>
-        <div><strong>\${dateStr}</strong></div>
-        <div><strong>Amount:</strong> $\${(g.amount_cents/100).toFixed(2)}</div>
-        <div><strong>Recipient:</strong> \${g.recipient_name} (\${g.recipient_email})</div>
-        <div><strong>From:</strong> \${g.buyer_name} (\${g.buyer_email})</div>
-        <div><strong>Message:</strong> \${g.message || "—"}</div>
-        <div><strong>Deliver on:</strong> \${g.deliver_on || "—"}</div>
-        <div><strong>Stripe:</strong> \${g.stripe_session_id}</div>
-      \`;
-
-      giftEl.appendChild(card);
+      html += '<div class="card">' +
+        '<button class="delete-btn" data-id="' + g.id + '" data-type="gift">Delete</button>' +
+        '<div><strong>' + dateStr + '</strong></div>' +
+        '<div><strong>Amount:</strong> $' + (g.amount_cents/100).toFixed(2) + '</div>' +
+        '<div><strong>Recipient:</strong> ' + (g.recipient_name || "—") + ' (' + (g.recipient_email || "—") + ')</div>' +
+        '<div><strong>From:</strong> ' + (g.buyer_name || "—") + ' (' + (g.buyer_email || "—") + ')</div>' +
+        '<div><strong>Message:</strong> ' + (g.message || "—") + '</div>' +
+        '<div><strong>Deliver on:</strong> ' + (g.deliver_on || "—") + '</div>' +
+        '<div><strong>Stripe:</strong> ' + g.stripe_session_id + '</div>' +
+      '</div>';
     });
+    giftEl.innerHTML = html;
 
-    document.querySelectorAll(".delete-btn[data-type='gift']").forEach(btn=>{
+    document.querySelectorAll(".delete-btn[data-type='gift']").forEach(btn => {
       btn.onclick = async () => {
-        if (!confirm("Delete this gift card?")) return;
-        await fetch("/api/admin/giftcards/" + btn.dataset.id, { method:"DELETE" });
-        loadGiftCards();
+        if (confirm("Delete this gift card permanently?")) {
+          await fetch("/api/admin/giftcards/" + btn.dataset.id, {
+            method: "DELETE",
+            headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
+          });
+          loadGiftCards();
+        }
       };
     });
   }
 
   function loadData(){
-    loadBookings();
-    loadGiftCards();
+    if (!content.classList.contains("locked")) {
+      loadBookings();
+      loadGiftCards();
+    }
   }
 
-  loadData();
+  // Auto-refresh when key is correct
+  if (savedKey && content.classList.contains("locked") === false) loadData();
 })();
 </script>
 </body>
