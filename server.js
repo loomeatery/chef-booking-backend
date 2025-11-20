@@ -288,7 +288,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       } else if (eventDate) {
         // Fallback: create if no pending existed (pop-up flow)
         const start = new Date(`${eventDate}T00:00:00.000Z`);
-        const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+           = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
         await pool.query(
           `INSERT INTO bookings (start_at, end_at, status, customer_name, customer_email,
                                  phone, address_line1, city, state, zip, diet_notes, stripe_session_id)
@@ -955,7 +955,7 @@ app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
     const year = Number(req.query.year), month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+    const end   = new Date(Date.UTC(year, month + 1, 1, 0,0,0));
     const r = await pool.query(
       `SELECT id,start_at,end_at,reason,created_at
          FROM blackout_dates
@@ -975,7 +975,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
     const year = Number(req.query.year), month = Number(req.query.month);
     if (!year || !month) return res.status(200).json([]);
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
-    const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
+    const end   = new Date(Date.UTC(year, month + 1, 1, 0,0,0));
     const r = await pool.query(
       `SELECT *
          FROM bookings
