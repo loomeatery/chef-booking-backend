@@ -1234,7 +1234,7 @@ app.get("/admin", (_req, res) => {
     }
   }
 
-  // ---------- Pop-Up Events ----------
+  // ---------- Pop-Up Events Admin ----------
   async function adjustSold(eventId, delta){
     try{
       const r = await fetch("/api/admin/events/"+encodeURIComponent(eventId)+"/adjust-sold", {
@@ -1259,98 +1259,125 @@ app.get("/admin", (_req, res) => {
     try{
       const list = await (await fetch("/api/events")).json();
       if (!Array.isArray(list) || list.length === 0) {
-        wrap.innerHTML='<div class="empty">No visible pop-up events.</div>';
+        const div = document.createElement("div");
+        div.className = "empty";
+        div.textContent = "No visible pop-up events.";
+        wrap.appendChild(div);
         return;
       }
-
       list.forEach(ev=>{
         const row = document.createElement("div");
         row.className = "evtrow";
 
         const c1 = document.createElement("div");
-        const d = (ev.dateISO||"").slice(0,10);
-
-       c1.innerHTML = `
-  <div style="font-weight:800">${ev.title || ev.id || "Pop-Up"}</div>
-  <div class="small">${d || ""} • ${ev.location || "Location TBA"}</div>
-`;
+        const d = (ev.dateISO || "").slice(0,10);
+        c1.innerHTML =
+          '<div style="font-weight:800">' +
+            (ev.title || ev.id || "Pop-Up") +
+          '</div>' +
+          '<div class="small">' +
+            (d || "") + ' • ' + (ev.location || "Location TBA") +
+          '</div>';
 
         const c2 = document.createElement("div");
         const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
+        c2.innerHTML =
+          '<span class="badge">Sold ' +
+            sold + ' / ' + cap +
+          '</span>';
 
-        c2.innerHTML = `<span class="badge">Sold \${sold} / \${cap}</span>`;
-
-        const c3=document.createElement("div"); c3.className="btns";
-        const minus=document.createElement("button"); minus.className="secondary"; minus.textContent="–1";
-        const plus=document.createElement("button"); plus.className="secondary"; plus.textContent="+1";
-
+        const c3 = document.createElement("div");
+        c3.className = "btns";
+        const minus = document.createElement("button");
+        minus.className = "secondary";
+        minus.textContent = "–1";
+        const plus  = document.createElement("button");
+        plus.className  = "secondary";
+        plus.textContent  = "+1";
         minus.addEventListener("click", ()=> adjustSold(ev.id, -1));
         plus.addEventListener("click",  ()=> adjustSold(ev.id, +1));
-        c3.append(minus,plus);
+        c3.append(minus, plus);
 
-        const c4=document.createElement("div"); c4.className="btns";
-        const inp=document.createElement("input"); inp.className="spin"; inp.type="number"; inp.min="-10"; inp.max="10"; inp.value="1";
-        const apply=document.createElement("button"); apply.className="secondary"; apply.textContent="Apply ±";
-        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value||0)));
-        c4.append(inp,apply);
+        const c4 = document.createElement("div");
+        c4.className = "btns";
+        const inp = document.createElement("input");
+        inp.className="spin";
+        inp.type="number";
+        inp.value="1";
+        inp.min="-10";
+        inp.max="10";
+        inp.step="1";
+        const apply = document.createElement("button");
+        apply.className="secondary";
+        apply.textContent="Apply ±";
+        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value || 0)));
+        c4.append(inp, apply);
 
         row.append(c1,c2,c3,c4);
         wrap.appendChild(row);
       });
-
     }catch(e){
-      wrap.innerHTML='<div class="empty" style="color:red">Error loading events.</div>';
+      const div = document.createElement("div");
+      div.className = "empty";
+      div.style.color="var(--bad)";
+      div.textContent = "Error loading events.";
+      wrap.appendChild(div);
     }
   }
 
-  // ---------- GIFT CARDS (PATCH 4) ----------
+  // ======================================================
+  // ==========  GIFT CARDS ADMIN LOADER (PATCH 4) ==========
+  // ======================================================
   async function loadGiftCards(){
-    const wrap=document.getElementById("giftcards");
-    wrap.innerHTML="";
+    const wrap = document.getElementById("giftcards");
+    wrap.innerHTML = "";
 
     try{
       const list = await getJSON("/__admin/giftcards");
-      if(!Array.isArray(list)||list.length===0){
-        wrap.innerHTML='<div class="empty">No gift cards yet.</div>';
+      if (!Array.isArray(list) || list.length === 0){
+        wrap.innerHTML = '<div class="empty">No gift cards yet.</div>';
         return;
       }
 
       list.forEach(gc=>{
-        const row=document.createElement("div");
-        row.className="rowb";
-        row.style.gridTemplateColumns="140px 1fr 140px 120px 100px";
+        const row = document.createElement("div");
+        row.className = "rowb";
+        row.style.gridTemplateColumns = "140px 1fr 140px 120px 100px";
 
         row.innerHTML =
-          `<div>
-             <div style="font-weight:700">\${gc.code}</div>
-             <div class="small">\${new Date(gc.created_at).toLocaleDateString()}</div>
-           </div>
+          '<div>' +
+            '<div style="font-weight:700">' + (gc.code || "") + '</div>' +
+            '<div class="small">' + new Date(gc.created_at).toLocaleDateString() + '</div>' +
+          '</div>' +
 
-           <div>
-             <div style="font-weight:600">\${gc.buyer_name || "—"}</div>
-             <div class="small">\${gc.buyer_email || ""}</div>
-           </div>
+          '<div>' +
+            '<div style="font-weight:600">' + (gc.buyer_name || "—") + '</div>' +
+            '<div class="small">' + (gc.buyer_email || "") + '</div>' +
+          '</div>' +
 
-           <div>
-             <div>$\${(gc.amount_cents/100).toFixed(2)}</div>
-             \${gc.basket ? '<div class="small">Basket ✓</div>' : ''}
-           </div>
+          '<div>' +
+            '<div>$' + (gc.amount_cents/100).toFixed(2) + '</div>' +
+            (gc.basket ? '<div class="small">Basket ✓</div>' : '') +
+          '</div>' +
 
-           <div>
-             <div>\${gc.recipient_name || "—"}</div>
-             <div class="small">\${gc.recipient_email || ""}</div>
-           </div>
+          '<div>' +
+            '<div>' + (gc.recipient_name || "—") + '</div>' +
+            '<div class="small">' + (gc.recipient_email || "") + '</div>' +
+          '</div>' +
 
-           <div>\${gc.status}</div>`;
+          '<div>' + (gc.status || "") + '</div>';
 
         wrap.appendChild(row);
       });
 
     }catch(e){
-      wrap.innerHTML='<div class="empty" style="color:red">Error loading gift cards.</div>';
+      wrap.innerHTML = '<div class="empty" style="color:red">Error loading gift cards.</div>';
     }
   }
 
+  // ======================================================
+  // ==============  LOAD EVERYTHING (PATCHED) =============
+  // ======================================================
   async function loadAll(){
     await Promise.all([
       loadBookings(),
@@ -1359,6 +1386,7 @@ app.get("/admin", (_req, res) => {
       loadGiftCards()
     ]);
   }
+
   loadAll();
 
   $("bdAdd").addEventListener("click", async ()=>{
