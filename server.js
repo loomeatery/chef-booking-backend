@@ -20,6 +20,33 @@ if (!STRIPE_SECRET) console.warn("⚠️ STRIPE_SECRET is not set.");
 if (!process.env.SITE_URL) console.warn("⚠️ SITE_URL is not set.");
 const stripe = new Stripe(STRIPE_SECRET);
 
+// ---------------- CORS FIX (Squarespace -> Render) ----------------
+app.use(
+  cors({
+    origin: [
+      "https://privatechefbooking.onrender.com",
+      "https://www.privatechefchristopherlamagna.com",
+      "https://privatechefchristopherlamagna.com"
+    ],
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "x-admin-key"],
+    credentials: false
+  })
+);
+
+// Handle browser preflight (Squarespace requires this)
+app.options("*", cors({
+  origin: [
+    "https://www.privatechefchristopherlamagna.com",
+    "https://privatechefchristopherlamagna.com",
+    "https://privatechefbooking.onrender.com"
+  ],
+  methods: ["GET", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-admin-key"],
+  credentials: false
+}));
+
+// Body parser AFTER CORS
 // ----------------- Postgres -----------------
 const { Pool } = pkg;
 const pool = new Pool({
@@ -87,6 +114,25 @@ async function initSchema() {
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_reference_id TEXT`
   ];
   for (const sql of alters) await pool.query(sql);
+
+  // ---- Gift Cards Table ----
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS gift_cards (
+      id BIGSERIAL PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      buyer_name TEXT,
+      buyer_email TEXT,
+      recipient_name TEXT,
+      recipient_email TEXT,
+      message TEXT,
+      deliver_on DATE,
+      basket BOOLEAN DEFAULT false,
+      stripe_session_id TEXT UNIQUE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 
   console.log("✅ Database schema ready");
 }
@@ -201,7 +247,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       let depositText = "Deposit received";
       try {
         if (session.payment_intent) {
-          const PI = await stripe.paymentIntents.retrieve(session.payment_intent);
+          const PI = await stripe.payment_intents.retrieve(session.payment_intent);
           const ch = PI.charges?.data?.[0];
           if (ch?.receipt_url) receiptUrl = ch.receipt_url;
           if (PI.amount_received) depositText = fmtUSD(PI.amount_received);
@@ -292,7 +338,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         console.error("❌ Pop-up seat update failed:", e);
       }
 
-      // ------ Send confirmation email (guest + admin copy)
+      // ------ Send booking confirmation (guest + admin copy)
       const guestEmail = cd.email || md.email || "";
       const safeName   = fullName || "Guest";
       const pkgTitle   = md.package_title || md.package || (md.event_title || "Private Event");
@@ -338,6 +384,66 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
           html
         });
       }
+
+      /* ==================== GIFT CARD LOGIC INSERTED HERE ==================== */
+
+      if (session.metadata?.giftcard === "yes") {
+        try {
+          const m = session.metadata;
+
+          await pool.query(
+            `INSERT INTO gift_cards
+              (code, amount_cents, buyer_name, buyer_email,
+               recipient_name, recipient_email, message,
+               deliver_on, basket, stripe_session_id, status)
+             VALUES
+              ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'paid')
+             ON CONFLICT (stripe_session_id) DO NOTHING`,
+            [
+              m.code,
+              Number(m.amount_cents || 0),
+              m.buyer_name || "",
+              m.buyer_email || "",
+              m.recipient_name || "",
+              m.recipient_email || "",
+              m.message || "",
+              m.deliver_on || null,
+              m.basket === "yes",
+              session.id
+            ]
+          );
+
+          // ---- Gift card confirmation email ----
+          if (m.buyer_email) {
+            await sendEmail({
+              to: m.buyer_email,
+              subject: "Your Gift Card Purchase",
+              html: `
+                <div style="font-family:ui-sans-serif;max-width:600px;margin:0 auto;line-height:1.6">
+                  <h2 style="margin:0 0 8px">Thank you for your purchase!</h2>
+                  <p>Your gift card has been processed.</p>
+
+                  <p><strong>Gift Card Code:</strong> ${m.code}</p>
+                  <p><strong>Recipient:</strong> ${m.recipient_name || "—"} (${m.recipient_email || "—"})</p>
+                  <p><strong>Amount:</strong> $${(Number(m.amount_cents)/100).toFixed(2)}</p>
+
+                  <p>I will send the PDF gift card shortly.</p>
+
+                  <p style="font-size:13px;color:#666">If you need anything, just reply to this email.</p>
+                </div>
+              `
+            });
+          }
+
+          console.log(`🎁 Gift card processed: ${m.code}`);
+
+        } catch (e) {
+          console.error("Gift card processing failed:", e);
+        }
+      }
+
+      /* ================== END GIFT CARD LOGIC ================== */
+
     }
 
     res.json({ received: true });
@@ -346,6 +452,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     res.status(500).send("Server error");
   }
 });
+
 // ----------------- Normal middleware (after webhook) -----------------
 
 app.use(cors());
@@ -464,6 +571,63 @@ app.post("/api/quote", (req, res) => {
   } catch (err) {
     console.error("Quote error:", err);
     res.status(400).json({ error: "Unable to create quote." });
+  }
+});
+
+// ====================== GIFT CARD CHECKOUT ======================
+app.post("/api/giftcards/create-checkout", async (req, res) => {
+  try {
+    const b = req.body || {};
+
+    const amountCents = Math.max(1, Number(b.amount || 0)) * 100;
+    const basket = Boolean(b.basket);
+
+    // generate code: GC-XXXXXXXX
+    const rand = Math.random().toString(36).slice(2, 10).toUpperCase();
+    const giftCode = `GC-${rand}`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      billing_address_collection: "required",
+      phone_number_collection: { enabled: true },
+      automatic_tax: { enabled: false }, // no tax on gift cards
+      allow_promotion_codes: true,
+      customer_email: b.buyer_email,
+
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: amountCents + (basket ? 12500 : 0),
+          product_data: {
+            name: "Gift Card",
+            description: `Gift Card for ${b.recipient_name || "Recipient"}`
+          }
+        }
+      }],
+
+      success_url: `${process.env.SITE_URL}/giftcard-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.SITE_URL}/giftcards#cancel`,
+
+      metadata: {
+        giftcard: "yes",
+        code: giftCode,
+        amount_cents: String(amountCents),
+        buyer_name: b.buyer_name || "",
+        buyer_email: b.buyer_email || "",
+        recipient_name: b.recipient_name || "",
+        recipient_email: b.recipient_email || "",
+        message: b.message || "",
+        deliver_on: b.deliver_on || "",
+        basket: basket ? "yes" : "no"
+      }
+    });
+
+    res.json({ url: session.url });
+
+  } catch (err) {
+    console.error("Gift card checkout error:", err);
+    res.status(500).json({ error: "Unable to create gift card checkout." });
   }
 });
 
@@ -766,7 +930,7 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
       `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
        VALUES ($1,$2,'confirmed',$3,$4)
        RETURNING id,start_at,end_at,status,customer_name,customer_email`,
-      [start.toISOString(), end.toISOString(), name || "", email || ""]
+      [start.toISOString(), end.toISOString(), name || "—", email || null]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -785,7 +949,7 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
-// ----------------- Admin list pages (JSON for admin UI) -----------------
+// ----------------- Admin list pages (JSON for admin UI) -------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
     const year = Number(req.query.year), month = Number(req.query.month);
@@ -813,11 +977,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
     const start = new Date(Date.UTC(year, month-1, 1, 0,0,0));
     const end   = new Date(Date.UTC(year, month,   1, 0,0,0));
     const r = await pool.query(
-      `SELECT id,start_at,end_at,status,customer_name,customer_email,
-              package_title, guests,
-              phone, address_line1, city, state, zip, diet_notes,
-              bartender, tablescape,
-              subtotal_cents, deposit_cents, balance_cents
+      `SELECT *
          FROM bookings
         WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
         ORDER BY start_at ASC`,
@@ -851,74 +1011,98 @@ app.get("/admin", (_req, res) => {
   .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
   .pad{padding:12px 14px}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  select,input[type="text"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  select,input[type="text"],input[type="date"],input[type="password"]{font-family:inherit;font-size:14px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
   button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
   button.secondary{background:#eef3ef;color:#223;border:1px solid var(--line)}
   button.danger{background:#c62828}
   .list{display:flex;flex-direction:column}
-  .rowb{display:grid;grid-template-columns:120px 1fr 120px 70px 110px 110px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
+  .rowb{display:grid;grid-template-columns:120px 1fr 120px 70px 40px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
   .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
   .pill{background:var(--pill);color:var(--ok);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block;border:1px solid #dcefe3}
-  .pill.gray{background:#f1f1f1;color:#555;border-color:#e5e7eb}
-  .small{font-size:12px;color:#666}
-  .right{display:flex;gap:8px;justify-content:flex-end}
-  .empty{padding:12px 14px;color:#6b7280}
-  #toast{font-size:13px;margin-left:8px}
-  .ok{color:var(--ok)} .bad{color:var(--bad)}
-
-  /* Pop-Up Events rows */
-  .evtrow{display:grid;grid-template-columns:1.4fr 140px 210px 1fr;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--line)}
-  .badge{display:inline-block;background:var(--pill);border:1px solid #dcefe3;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--ok)}
-  .btns{display:flex;gap:8px;align-items:center}
-  input.spin{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
+  .pill.gray{background:#f3f4f6;color:#374151;border-color:#e5e7eb}
+  .pill.red{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
+  .pill.badge{font-weight:700;letter-spacing:0.03em}
+  .mut{font-size:12px;color:var(--mut)}
+  .mut strong{color:#111827}
+  .field{display:flex;flex-direction:column;gap:4px;font-size:13px}
+  .field label{font-weight:600}
+  .field small{color:var(--mut);font-size:11px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+  .chips span{background:#eef2ff;color:#3730a3;padding:3px 7px;border-radius:999px;font-size:11px}
+  .event-list{display:flex;flex-direction:column;gap:8px}
+  .event-row{border:1px solid var(--line);border-radius:10px;padding:8px 10px;display:grid;grid-template-columns:1fr 120px 60px;align-items:center;gap:8px;background:#fafafa}
+  .event-row h4{margin:0;font-size:14px}
+  .badge{font-size:11px;border-radius:999px;padding:2px 6px;border:1px solid #d1d5db;color:#374151;background:#f9fafb}
+  .pill.warn{background:#fef3c7;color:#92400e;border-color:#fcd34d}
+  .pill.ok{background:#ecfdf3;color:#166534;border-color:#bbf7d0}
 </style>
 </head>
 <body>
-<header>Private Chef Christopher LaMagna Database</header>
+<header>Private Chef — Admin</header>
 <div class="wrap">
-  <div class="toolbar">
-    <label>Month</label>
-    <select id="mSel" aria-label="Month"></select>
-    <label>Year</label>
-    <select id="ySel" aria-label="Year"></select>
-    <button id="refresh" type="button">Refresh</button>
-
-    <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key)"/>
-    <button id="saveKey" type="button" class="secondary">Save</button>
-    <button id="clearKey" type="button" class="secondary">Clear</button>
-    <span id="toast"></span>
+  <div class="mut" style="margin-bottom:10px">
+    Use your admin key to view & manage bookings, blackout dates, and pop-up events.
   </div>
-
-  <div class="row">
+  <div class="field" style="max-width:260px;margin-bottom:16px">
+    <label for="admKey">Admin key</label>
+    <input id="admKey" type="password" placeholder="x-admin-key header"/>
+    <small>Stored locally in your browser only.</small>
+  </div>
+  <div class="row" style="align-items:flex-start">
     <div class="card">
-      <div class="head">Bookings</div>
-      <div class="list" id="bookings"></div>
-    </div>
-    <div class="card">
-      <div class="head">Blackout Dates</div>
+      <div class="head">Calendar</div>
       <div class="pad">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="bdDate"/>
-          <input type="text" id="bdReason" placeholder="Reason (optional)" style="flex:1"/>
-          <button id="bdAdd" type="button">Add blackout</button>
+        <div class="toolbar">
+          <button type="button" id="prevBtn">◀</button>
+          <div id="monthLabel"></div>
+          <button type="button" id="nextBtn">▶</button>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-          <input type="text" id="bdBulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD" style="flex:1"/>
-          <button id="bdBulkBtn" type="button">Add bulk</button>
+        <div id="calendarGrid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px"></div>
+        <div class="mut" style="margin-top:8px;font-size:11px">
+          <span class="pill badge">Key</span>
+          <span class="pill gray">Open</span>
+          <span class="pill">Booked</span>
+          <span class="pill red">Blackout</span>
         </div>
       </div>
-      <div class="list" id="blackouts"></div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="card">
+        <div class="head">Pop-Up Events</div>
+        <div class="pad">
+          <div class="event-list" id="eventList"></div>
+          <div class="mut" style="margin-top:8px;font-size:11px">
+            Events are stored in <code>events.json</code> on the server.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">Blackout Dates</div>
+        <div class="pad">
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="date" id="bdDate"/>
+            <input type="text" id="bdReason" placeholder="Reason (optional)" style="flex:1"/>
+            <button id="bdAdd" type="button">Add blackout</button>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <input type="text" id="bdBulk" placeholder="YYYY-MM-DD, comma separated" style="flex:1"/>
+            <button id="bdBulkBtn" type="button">Bulk add</button>
+          </div>
+          <div id="bdList" style="margin-top:10px;font-size:13px" class="mut">Loading…</div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Pop-Up Events Card -->
-  <div class="card" style="margin-top:16px">
-    <div class="head">Pop-Up Events (Seats)</div>
+  <div style="margin-top:16px" class="card">
+    <div class="head">Bookings</div>
     <div class="pad">
-      <div class="small" style="color:#666;margin-bottom:8px">
-        Adjust seats when you add/remove a guest manually or issue a refund. Changes reflect on the site immediately.
+      <div class="toolbar" style="margin-bottom:10px">
+        <span class="mut">Showing selected month from calendar</span>
       </div>
-      <div class="list" id="events"></div>
+      <div class="list" id="bookings"></div>
     </div>
   </div>
 </div>
@@ -926,435 +1110,409 @@ app.get("/admin", (_req, res) => {
 <script>
 (function(){
   const BASE = "";
-  const $ = (id) => document.getElementById(id);
-  const toast = (t, ok) => { const el=$("toast"); el.textContent=t||""; el.className= ok===true?"ok": ok===false?"bad":""; };
+  function $(id){ return document.getElementById(id); }
 
-  // UTC-safe date renderers (avoid TZ drift)
-  function dUTC(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d)+", "+y; }
-  function dMD(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d); }
-  const usd = (c) => (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});
-
+  // Admin key storage
   function headers(){
-    const h={"Content-Type":"application/json"};
-    const k=localStorage.getItem("chef_admin_key");
-    if(k) h["x-admin-key"]=k;
+    const key = $("admKey").value.trim();
+    const h = { "Content-Type":"application/json" };
+    if (key) h["x-admin-key"] = key;
     return h;
   }
 
-  async function getJSON(path){
-    const r = await fetch(BASE + path, { headers: headers() });
-    if (r.status === 401) throw new Error("unauthorized");
-    try { return await r.json(); } catch { return []; }
-  }
-
-  // Init month/year
-  (function(){
-    const mSel = $("mSel"), ySel=$("ySel");
-    for(let i=1;i<=12;i++){
-      const o=document.createElement("option");
-      o.value=String(i);
-      o.textContent=new Date(2025,i-1,1).toLocaleString("en-US",{month:"long"});
-      mSel.appendChild(o);
-    }
-    const now=new Date(), y0=now.getFullYear()-1;
-    for(let y=y0;y<=y0+3;y++){
-      const o=document.createElement("option");
-      o.value=String(y); o.textContent=String(y); ySel.appendChild(o);
-    }
-    mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());
-  })();
-
   // Key field
   $("admKey").value = localStorage.getItem("chef_admin_key") || "";
-  $("saveKey").addEventListener("click", ()=>{ localStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved ✓", true); });
-  $("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
+  $("admKey").addEventListener("input", () => {
+    localStorage.setItem("chef_admin_key", $("admKey").value.trim());
+    refreshAll();
+  });
 
-  $("refresh").addEventListener("click", ()=> loadAll());
+  let currentYear  = new Date().getFullYear();
+  let currentMonth = new Date().getMonth() + 1; // 1-12
 
-  async function deleteBooking(id){
-    if(!confirm("Delete this booking? (Use with care)")) return;
-    const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
-    if(r.status===401){ toast("Unauthorized — check your key", false); return; }
-    if(r.ok){ toast("Booking deleted ✓", true); loadBookings(); }
-    else { toast("Delete failed", false); }
+  function monthLabel(y,m){
+    return new Date(Date.UTC(y,m-1,1)).toLocaleString("en-US",{month:"long",year:"numeric"});
   }
 
-  async function loadBookings(){
-    const y=$("ySel").value, m=$("mSel").value;
-    const wrap=$("bookings"); wrap.innerHTML="";
-    try{
-      const data = await getJSON("/__admin/list-bookings?year="+y+"&month="+m);
-      if(!Array.isArray(data)||data.length===0){
-        const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
-        wrap.appendChild(div); return;
-      }
-      data.forEach(b=>{
-        const row=document.createElement("div"); row.className="rowb";
-        const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
-        const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
-        const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
-        const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
-        const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
-        const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||"—")+'</span>';
-        row.append(col1,col2,col3,col4,col5,col6);
-        wrap.appendChild(row);
+  function renderCalendar(y,m, data){
+    $("monthLabel").textContent = monthLabel(y,m);
+    const grid = $("calendarGrid");
+    grid.innerHTML = "";
+    const firstDay = new Date(Date.UTC(y,m-1,1));
+    const dow = firstDay.getUTCDay(); // 0=Sun
+    for(let i=0;i<dow;i++){
+      const div=document.createElement("div");
+      div.style.minHeight="38px";
+      grid.appendChild(div);
+    }
+    const daysInMonth = new Date(Date.UTC(y,m,0)).getUTCDate();
 
-        const meta=document.createElement("div"); meta.className="meta";
-        const left=document.createElement("div");
-        left.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Address</div>'
-          + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
-          + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
-          + '<div class="small">'+(b.phone||"—")+'</div>'
-          + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
-          + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
-          + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
-        const right=document.createElement("div"); right.className="right";
-        const delBtn=document.createElement("button"); delBtn.className="danger"; delBtn.type="button"; delBtn.textContent="Delete";
-        delBtn.addEventListener("click", ()=>deleteBooking(b.id));
-        right.appendChild(delBtn);
-        meta.append(left,right);
-        wrap.appendChild(meta);
-      });
-      toast("");
-    }catch(e){
-      if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
-        wrap.appendChild(div); toast("Unauthorized — check your key", false);
-      }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading bookings.";
-        wrap.appendChild(div); toast("Error loading bookings", false);
+    const booked   = new Set(data.booked || []);
+    const blackouts = new Map((data.blackouts||[]).map(d => [d.date, d]));
+
+    for(let day=1;day<=daysInMonth;day++){
+      const d = String(day).padStart(2,"0");
+      const ds = \`\${y}-\${String(m).padStart(2,"0")}-\${d}\`;
+      const btn=document.createElement("button");
+      btn.type="button";
+      btn.textContent=String(day);
+      btn.style.width="100%";
+      btn.style.minHeight="38px";
+      btn.style.borderRadius="10px";
+      btn.style.border="1px solid #e5e7eb";
+      btn.style.background="#fff";
+      btn.style.cursor="pointer";
+      btn.style.fontSize="13px";
+
+      const isBooked   = booked.has(ds);
+      const boInfo = blackouts.get(ds);
+
+      if (boInfo) {
+        btn.style.background="#fee2e2";
+        btn.style.borderColor="#fecaca";
+        btn.title = boInfo.reason || "Blackout";
+      } else if (isBooked) {
+        btn.style.background="#dcfce7";
+        btn.style.borderColor="#bbf7d0";
+        btn.title = "Booked";
       }
+
+      btn.addEventListener("click", () => {
+        loadBookingsFor(y,m);
+      });
+
+      grid.appendChild(btn);
     }
   }
 
-  async function loadBlackouts(){
-    const y=$("ySel").value, m=$("mSel").value;
-    const wrap=$("blackouts"); wrap.innerHTML="";
+  async function loadCalendar(){
     try{
-      const data = await getJSON("/__admin/list-blackouts?year="+y+"&month="+m);
-      if(!Array.isArray(data)||data.length===0){
-        const div=document.createElement("div"); div.className="empty"; div.textContent="No blackouts this month.";
-        wrap.appendChild(div); return;
-      }
-      data.forEach(b=>{
-        const row=document.createElement("div"); row.className="rowb"; row.style.gridTemplateColumns="1fr 1fr 100px";
-        const d=document.createElement("div"); d.textContent = dUTC(b.start_at);
-        const r=document.createElement("div"); r.className="small"; r.textContent = (b.reason || "—");
-        const c=document.createElement("div"); c.className="right";
-        const del=document.createElement("button"); del.className="danger"; del.type="button"; del.textContent="Delete";
-        del.addEventListener("click", async ()=>{
-          if(!confirm("Delete this blackout date?")) return;
-          const resp = await fetch(BASE+"/api/admin/blackouts/"+b.id,{method:"DELETE",headers:headers()});
-          if(resp.status===401){ toast("Unauthorized — check your key", false); return; }
-          if(resp.ok){ loadBlackouts(); } else { toast("Delete failed", false); }
-        });
-        c.appendChild(del);
-        row.append(d,r,c);
-        wrap.appendChild(row);
+      const key = $("admKey").value.trim();
+      const params = new URLSearchParams({ year:String(currentYear), month:String(currentMonth) });
+      const [avail, blackouts] = await Promise.all([
+        fetch(\`/api/availability?\${params.toString()}\`, { headers: key? {"x-admin-key":key} : {} }).then(r=>r.json()),
+        fetch(\`/__admin/list-blackouts?\${params.toString()}\`, { headers: headers() }).then(r=>r.json())
+      ]);
+
+      const boDates = (blackouts||[]).map(b => {
+        const d = new Date(b.start_at);
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth()+1).padStart(2,"0");
+        const day = String(d.getUTCDate()).padStart(2,"0");
+        return { id:b.id, date:\`\${y}-\${m}-\${day}\`, reason:b.reason };
       });
-      toast("");
+
+      renderCalendar(currentYear,currentMonth,{
+        booked: avail.booked || [],
+        blackouts: boDates
+      });
     }catch(e){
-      if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
-        wrap.appendChild(div); toast("Unauthorized — check your key", false);
-      }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading blackouts.";
-        wrap.appendChild(div); toast("Error loading blackouts", false);
-      }
+      console.error(e);
     }
   }
 
-  // ---------- Pop-Up Events Admin ----------
-  async function adjustSold(eventId, delta){
+  async function loadBookingsFor(y,m){
     try{
-      const r = await fetch("/api/admin/events/"+encodeURIComponent(eventId)+"/adjust-sold", {
-        method: "POST",
-        headers: headers(),
-        body: JSON.stringify({ delta: Number(delta) })
-      });
-      if (r.status === 401) { toast("Unauthorized — check your key", false); return; }
-      if (!r.ok) { toast("Seat adjust failed", false); return; }
-      await r.json();
-      toast("Seats updated ✓", true);
-      loadEventsAdmin();
-    }catch(e){
-      toast("Seat adjust error", false);
-    }
-  }
-
-  async function loadEventsAdmin(){
-    const wrap = $("events");
-    if (!wrap) return;
-    wrap.innerHTML = "";
-    try{
-      const list = await (await fetch("/api/events")).json();
-      if (!Array.isArray(list) || list.length === 0) {
-        const div = document.createElement("div");
-        div.className = "empty";
-        div.textContent = "No visible pop-up events.";
-        wrap.appendChild(div);
+      const params = new URLSearchParams({ year:String(y), month:String(m) });
+      const r = await fetch(\`/__admin/list-bookings?\${params.toString()}\`, { headers: headers() });
+      const data = await r.json();
+      const list = $("bookings");
+      list.innerHTML = "";
+      if (!Array.isArray(data) || data.length===0){
+        list.innerHTML = '<div class="mut">No bookings for this month.</div>';
         return;
       }
-      list.forEach(ev=>{
-        const row = document.createElement("div");
-        row.className = "evtrow";
 
-        // Title + date/location
-        const c1 = document.createElement("div");
-        const d = (ev.dateISO||"").slice(0,10);
-        c1.innerHTML = \`<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
-                        <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>\`;
+      data.forEach(b => {
+        const row=document.createElement("div");
+        row.className="rowb";
+        const d = new Date(b.start_at);
+        const ds = d.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+        const time = d.toLocaleTimeString("en-US",{hour:"numeric",minute:"2-digit"});
 
-        // Seats
-        const c2 = document.createElement("div");
-        const sold = Number(ev.sold || 0), cap = Number(ev.capacity || 0);
-        c2.innerHTML = \`<span class="badge">Sold \${sold} / \${cap}</span>\`;
+        const col1=document.createElement("div");
+        col1.innerHTML = \`<div><strong>\${ds}</strong></div><div class="mut">\${time}</div>\`;
 
-        // Quick –1 / +1
-        const c3 = document.createElement("div"); c3.className = "btns";
-        const minus = document.createElement("button"); minus.className = "secondary"; minus.textContent = "–1";
-        const plus  = document.createElement("button"); plus.className  = "secondary"; plus.textContent  = "+1";
-        minus.addEventListener("click", ()=> adjustSold(ev.id, -1));
-        plus.addEventListener("click",  ()=> adjustSold(ev.id, +1));
-        c3.append(minus, plus);
+        const col2=document.createElement("div");
+        col2.innerHTML = \`
+          <div><strong>\${b.customer_name || "—"}</strong></div>
+          <div class="mut">\${b.customer_email || ""}</div>
+          <div class="mut">\${(b.package_title || b.package_id || "").toUpperCase()} • \${b.guests || "?"} guests</div>
+        \`;
 
-        // Custom delta
-        const c4 = document.createElement("div"); c4.className = "btns";
-        const inp = document.createElement("input"); inp.className="spin"; inp.type="number"; inp.value="1";
-        inp.min="-10"; inp.max="10"; inp.step="1";
-        const apply = document.createElement("button"); apply.className="secondary"; apply.textContent="Apply ±";
-        apply.addEventListener("click", ()=> adjustSold(ev.id, Number(inp.value || 0)));
-        c4.append(inp, apply);
+        const col3=document.createElement("div");
+        const statusPill = document.createElement("span");
+        statusPill.className = "pill badge";
+        statusPill.textContent = (b.status || "pending").toUpperCase();
+        if (b.status === "confirmed") statusPill.classList.add("ok");
+        else if (b.status === "canceled") statusPill.classList.add("gray");
+        else statusPill.classList.add("warn");
+        col3.appendChild(statusPill);
 
-        row.append(c1,c2,c3,c4);
-        wrap.appendChild(row);
+        const col4=document.createElement("div");
+        col4.textContent = b.subtotal_cents ? ("$"+(b.subtotal_cents/100).toFixed(2)) : "";
+
+        const col5=document.createElement("div");
+        const delBtn=document.createElement("button");
+        delBtn.className="danger";
+        delBtn.textContent="✕";
+        delBtn.title="Delete booking";
+        delBtn.style.padding="4px 8px";
+        delBtn.addEventListener("click", async () => {
+          if (!confirm("Delete this booking?")) return;
+          const resp = await fetch(BASE + "/api/admin/bookings/" + b.id, { method:"DELETE", headers: headers() });
+          if (resp.ok){
+            row.remove();
+            loadCalendar();
+          }
+        });
+        col5.appendChild(delBtn);
+
+        row.appendChild(col1);
+        row.appendChild(col2);
+        row.appendChild(col3);
+        row.appendChild(col4);
+        row.appendChild(col5);
+
+        const meta=document.createElement("div");
+        meta.className="meta";
+        meta.innerHTML = \`
+          <div>
+            <div class="mut"><strong>Phone:</strong> \${b.phone || "—"}</div>
+            <div class="mut"><strong>Address:</strong> \${[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ") || "—"}</div>
+            <div class="mut"><strong>Diet notes:</strong> \${b.diet_notes || "—"}</div>
+          </div>
+          <div>
+            <div class="mut"><strong>Stripe session:</strong> \${b.stripe_session_id || "—"}</div>
+            <div class="mut"><strong>Created via</strong> \${b.created_via || "online"} · <strong>Status:</strong> \${b.status || "pending"}</div>
+          </div>
+        \`;
+
+        list.appendChild(row);
+        list.appendChild(meta);
       });
     }catch(e){
-      const div = document.createElement("div");
-      div.className = "empty"; div.style.color="var(--bad)";
-      div.textContent = "Error loading events.";
-      wrap.appendChild(div);
+      console.error(e);
     }
   }
 
-  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); }
-  loadAll();
+  async function loadEvents(){
+    try{
+      const r = await fetch("/api/events",{ headers: headers() });
+      const data = await r.json();
+      const list = $("eventList");
+      list.innerHTML = "";
+      if (!Array.isArray(data) || data.length===0){
+        list.innerHTML = '<div class="mut">No events in events.json.</div>';
+        return;
+      }
+      data.forEach(ev => {
+        const row=document.createElement("div");
+        row.className="event-row";
+        row.innerHTML = \`
+          <div>
+            <h4>\${ev.title || ev.id}</h4>
+            <div class="mut">\${ev.date || ""} · \${ev.time || ""}</div>
+            <div class="mut">Capacity: \${ev.capacity || "?"} · Sold: \${ev.sold || 0}</div>
+          </div>
+          <div>
+            <span class="badge">\${ev.id}</span>
+          </div>
+          <div style="text-align:right">
+            <button type="button" data-id="\${ev.id}" class="secondary" style="font-size:11px;padding:4px 6px">Adjust Sold</button>
+          </div>
+        \`;
+        list.appendChild(row);
+      });
 
-  // Add blackout actions
-  $("bdAdd").addEventListener("click", async ()=>{
-    const date=$("bdDate").value, reason=$("bdReason").value;
-    if(!date){ toast("Pick a date", false); return; }
-    const r = await fetch(BASE+"/api/admin/blackouts",{method:"POST",headers:headers(),body:JSON.stringify({date,reason})});
-    if(r.status===401) return toast("Unauthorized — check your key", false);
-    if(r.ok){ $("bdDate").value=""; $("bdReason").value=""; loadBlackouts(); toast("Blackout added ✓", true); }
-    else toast("Add failed", false);
+      list.querySelectorAll("button[data-id]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          const deltaStr = prompt("Adjust sold by (e.g. +2, -1):","");
+          if (!deltaStr) return;
+          const delta = Number(deltaStr);
+          if (!Number.isFinite(delta) || delta === 0) return;
+          fetch("/api/admin/events/"+encodeURIComponent(id)+"/adjust-sold",{
+            method:"POST",
+            headers: headers(),
+            body: JSON.stringify({ delta })
+          }).then(r => r.json()).then(() => loadEvents());
+        });
+      });
+
+    }catch(e){
+      console.error(e);
+    }
+  }
+
+  // Blackout handlers
+  $("bdAdd").addEventListener("click", async () => {
+    const date = $("bdDate").value;
+    const reason = $("bdReason").value.trim();
+    if (!date) return alert("Pick a date");
+    const r = await fetch("/api/admin/blackouts",{
+      method:"POST",
+      headers: headers(),
+      body: JSON.stringify({ date, reason })
+    });
+    if (r.ok){
+      $("bdDate").value = "";
+      $("bdReason").value = "";
+      loadCalendar();
+    }
   });
 
-  $("bdBulkBtn").addEventListener("click", async ()=>{
-    const raw=($("bdBulk").value||"").trim();
-    if(!raw){ toast("Enter comma-separated YYYY-MM-DD dates", false); return; }
-    const dates = raw.split(",").map(s=>s.trim()).filter(Boolean);
-    const r = await fetch(BASE+"/api/admin/blackouts/bulk",{method:"POST",headers:headers(),body:JSON.stringify({dates})});
-    if(r.status===401) return toast("Unauthorized — check your key", false);
-    if(r.ok){ $("bdBulk").value=""; loadBlackouts(); toast("Bulk added ✓", true); }
-    else toast("Bulk add failed", false);
+  $("bdBulkBtn").addEventListener("click", async () => {
+    const raw = $("bdBulk").value.trim();
+    if (!raw) return;
+    const dates = raw.split(",").map(s => s.trim()).filter(Boolean);
+    if (!dates.length) return;
+    const r = await fetch("/api/admin/blackouts/bulk",{
+      method:"POST",
+      headers: headers(),
+      body: JSON.stringify({ dates })
+    });
+    if (r.ok){
+      $("bdBulk").value = "";
+      loadCalendar();
+    }
   });
 
+  function refreshAll(){
+    loadCalendar();
+    loadBookingsFor(currentYear,currentMonth);
+    loadEvents();
+  }
+
+  $("prevBtn").addEventListener("click", () => {
+    currentMonth--;
+    if (currentMonth < 1){ currentMonth = 12; currentYear--; }
+    refreshAll();
+  });
+  $("nextBtn").addEventListener("click", () => {
+    currentMonth++;
+    if (currentMonth > 12){ currentMonth = 1; currentYear++; }
+    refreshAll();
+  });
+
+  refreshAll();
 })();
 </script>
-</body></html>`);
+
+</body>
+</html>`);
 });
 
-// ----------------- Success page (unchanged visuals) -----------------
-app.get("/booking-success", async (req, res) => {
-  const session_id = req.query.session_id || "";
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>You're Booked!</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-<style>
-  :root{--ink:#1f2937;--mut:#6b7280;--btn:#7B8B74;--bg:#fafaf7;}
-  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
-  .wrap{max-width:720px;margin:0 auto;padding:40px 20px;text-align:center}
-  .card{background:#fff;border:1px solid #eee;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.05)}
-  h1{font-size:34px;margin:0 0 10px}
-  p{margin:8px 0;color:var(--mut)}
-  .cta{display:inline-block;margin-top:18px;background:#7B8B74;color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;text-decoration:none}
-  .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:16px}
-  .pill{background:#f3f8f3;border:1px solid #e5efe5;border-radius:999px;padding:8px 12px;font-size:13px}
-</style></head>
-<body>
-<div class="wrap">
-  <div class="card">
-    <h1>Congratulations! You’re all booked 🎉</h1>
-    <p>We’ve emailed your confirmation and next steps.</p>
-    <div class="row">
-      <div class="pill">Personal call to plan your menu</div>
-      <div class="pill">Day-of kitchen prep included</div>
-      <div class="pill">We handle all the details</div>
-    </div>
-    <a class="cta" href="/contact">Need anything? Get in touch</a>
-    <p style="margin-top:12px;font-size:13px">Booking ID (Stripe session): ${session_id}</p>
-  </div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
-<script>
-  confetti({ particleCount: 120, spread: 70, origin: { y: 0.6 } });
-  const end = Date.now() + 800;
-  (function frame(){ confetti({particleCount:3, spread:70, origin:{y:0.6}}); if(Date.now()<end) requestAnimationFrame(frame); })();
-</script>
-</body></html>`);
-});
-
-// ======================================================
-// =============== POP-UP EVENTS MODULE ==================
-// ======================================================
+// ----------------- Events JSON helpers (for pop-ups) -----------------
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
-const eventsFile = path.join(__dirname, "events.json");
+const EVENTS_PATH = path.join(__dirname, "events.json");
 
 function loadEvents() {
   try {
-    const raw = fs.readFileSync(eventsFile, "utf8");
+    const raw = fs.readFileSync(EVENTS_PATH, "utf8");
     return JSON.parse(raw);
   } catch {
     return [];
   }
 }
+
 function saveEvents(events) {
-  fs.writeFileSync(eventsFile, JSON.stringify(events, null, 2));
+  try {
+    fs.writeFileSync(EVENTS_PATH, JSON.stringify(events, null, 2), "utf8");
+  } catch (e) {
+    console.error("Failed to save events.json", e);
+  }
 }
 
-// --------- API: Get All Events (for frontend display)
+// ----------------- Events API -----------------
 app.get("/api/events", async (_req, res) => {
   try {
     const events = loadEvents();
-    res.json(events.filter(e => e.visible !== false));
-  } catch (err) {
-    console.error("Error loading events:", err);
-    res.status(500).json({ error: "Unable to load events." });
+    res.json(events);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to load events" });
   }
 });
 
-// --------- API: Create Stripe Checkout for a specific event
-app.post("/api/events/:id/book", async (req, res) => {
+app.post("/api/admin/events", requireAdmin, async (req, res) => {
   try {
-    const { id } = req.params;
     const events = loadEvents();
-    const ev = events.find(e => e.id === id);
-    if (!ev) return res.status(404).json({ error: "Event not found." });
-    if (ev.sold >= ev.capacity) {
-      return res.status(400).json({ error: "Event is sold out." });
+    const payload = req.body || {};
+    if (!payload.id) {
+      return res.status(400).json({ error: "id is required" });
     }
 
-    const qty = Math.min(Number(req.body.quantity || 1), ev.capacity - ev.sold);
+    const idx = events.findIndex(e => e.id === payload.id);
+    if (idx === -1) {
+      events.push({ ...payload, sold: payload.sold || 0, sessions: [] });
+    } else {
+      events[idx] = {
+        ...events[idx],
+        ...payload,
+        sold: payload.sold ?? events[idx].sold ?? 0,
+        sessions: Array.isArray(events[idx].sessions) ? events[idx].sessions : []
+      };
+    }
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      payment_method_types: ["card"],
-      phone_number_collection: { enabled: true },
-      billing_address_collection: "auto",
-      allow_promotion_codes: true,
-
-      // Stripe will charge for exactly the quantity chosen on your site
-      line_items: [{
-        quantity: qty,
-        price_data: {
-          currency: "usd",
-          unit_amount: Number(ev.price || 11500), // cents
-          product_data: {
-            name: ev.title || "Pop-Up Class",
-            description: `${(ev.dateISO || "").slice(0,10)} • ${ev.location || "Brooklyn, NY"}`
-          }
-        }
-      }],
-
-      // After payment, send them to your success page
-      success_url: `${process.env.SITE_URL}/booking-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url:  `${process.env.SITE_URL}/popup#cancel`,
-
-      // Custom questions that will appear on Checkout
-      custom_fields: [
-        {
-          key: "dietary",
-          label: { type: "custom", custom: "Dietary Restrictions or Allergies" },
-          type: "text",
-          text: { maximum_length: 255 },
-          optional: true
-        },
-        {
-          key: "guest_names",
-          label: { type: "custom", custom: "Guests Name(s)" },
-          type: "text",
-          text: { maximum_length: 255 },
-          optional: true
-        },
-        {
-          key: "referral",
-          label: { type: "custom", custom: "How Did You Hear About Us?" },
-          type: "text",
-          text: { maximum_length: 200 },
-          optional: true
-        }
-      ],
-
-      // Used by the webhook to record and reconcile
-      metadata: {
-        event_id: id,
-        quantity: String(qty),
-        event_date: (ev.dateISO || "").slice(0, 10), // "YYYY-MM-DD"
-        event_title: ev.title || "Pop-Up Class",
-        event_price_cents: String(ev.price || 0)
-      }
-    });
-
-    res.json({ url: session.url });
-  } catch (err) {
-    console.error("Error creating event checkout:", err);
-    res.status(500).json({ error: "Unable to create checkout session." });
+    saveEvents(events);
+    res.json({ ok: true, events });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to save event" });
   }
 });
 
-// --------- API: Admin — adjust sold seats (+/-)
-// Use with x-admin-key header. Example to add one seat back:
-// curl -X POST https://<your-host>/api/admin/events/brooklyn-nov14/adjust-sold \
-//   -H 'Content-Type: application/json' -H 'x-admin-key: ULTRACHRIS2022' -d '{"delta":1}'
 app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
   try {
-    const { id } = req.params;
-    const delta   = Number(req.body?.delta || 0);
+    const id = req.params.id;
+    const delta = Number(req.body?.delta || 0);
     if (!Number.isFinite(delta) || delta === 0) {
-      return res.status(400).json({ error: "Provide non-zero numeric 'delta'." });
+      return res.status(400).json({ error: "delta must be a non-zero number" });
     }
-    const events = loadEvents();
-    const ev = events.find(e => e.id === id);
-    if (!ev) return res.status(404).json({ error: "Event not found." });
 
-    const cap  = Number(ev.capacity || 0);
-    const oldS = Number(ev.sold || 0);
-    const next = Math.max(0, Math.min(cap, oldS + delta));
-    ev.sold = next;
+    const events = loadEvents();
+    const idx = events.findIndex(e => e.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: "event not found" });
+    }
+
+    const ev = events[idx];
+    const newSold = (Number(ev.sold || 0) + delta);
+    if (newSold < 0) {
+      return res.status(400).json({ error: "resulting sold would be negative" });
+    }
+
+    ev.sold = newSold;
+    events[idx] = ev;
     saveEvents(events);
 
-    res.json({ ok: true, sold: ev.sold, capacity: cap });
+    res.json({ ok: true, event: ev });
   } catch (e) {
-    console.error("adjust-sold error:", e);
-    res.status(500).json({ error: "Unable to adjust seats." });
+    console.error(e);
+    res.status(500).json({ error: "Failed to adjust sold" });
   }
 });
 
-// ======================================================
-// =============== END POP-UP EVENTS MODULE ==============
-// ======================================================
+app.delete("/api/admin/events/:id", requireAdmin, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const events = loadEvents();
+    const filtered = events.filter(e => e.id !== id);
+    saveEvents(filtered);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Failed to delete event" });
+  }
+});
 
-
-// ----------------- Start server -----------------
+// ----------------- Start -----------------
 app.listen(port, () => {
-  console.log(`Chef booking server listening on ${port}`);
+  console.log(`🚀 Server listening on port ${port}`);
 });
