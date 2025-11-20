@@ -990,165 +990,144 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI — FINAL WORKING VERSION --------------------
+// -------------------- ADMIN UI — FINAL: BEAUTIFUL + DATES FIXED --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`
-<!DOCTYPE html>
+  res.end(String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Private Chef — Admin</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Private Chef Christopher LaMagna — Admin</title>
 <style>
-  body { font-family: Inter, sans-serif; background:#f6f7f6; margin:0; padding:20px; color:#1c1c1c; }
-  h1 { font-size:22px; margin-bottom:10px; }
-  .controls { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
-  input, select, button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
-  button { background:#1b5e20; color:white; cursor:pointer; }
+  body { font-family: system-ui, sans-serif; background:#f9fafb; color:#111; margin:0; padding:20px; }
+  h1 { background:#1b5e20; color:white; padding:16px 20px; margin:-20px -20px 20px; border-radius:8px 8px 0 0; }
+  .toolbar { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin-bottom:20px; background:white; padding:16px; border-radius:8px; box-shadow:0 1px 3px rgba(0,0,0,0.1); }
+  input[type=password], select, button { padding:10px 14px; border-radius:6px; border:1px solid #ccc; font-size:14px; }
+  button { background:#1b5e20; color:white; border:none; cursor:pointer; font-weight:600; }
+  button:hover { background:#16611a; }
   button.clear { background:#666; }
-  .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; position:relative; }
-  .delete-btn { background:#c62828; color:white; border:0; padding:6px 12px; border-radius:6px; font-weight:600; position:absolute; top:12px; right:12px; cursor:pointer; }
-  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; }
-  .muted { color:#666; font-size:14px; }
-  .section-title { font-size:18px; margin:30px 0 10px; font-weight:700; }
+  .card { background:white; padding:16px; border-radius:8px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,0.1); position:relative; border-left:5px solid #1b5e20; }
+  .delete { position:absolute; top:12px; right:12px; background:#c62828; color:white; padding:6px 12px; border-radius:6px; font-size:12px; }
+  .status { padding:4px 8px; border-radius:4px; font-size:12px; font-weight:600; }
+  .confirmed { background:#d9f7e3; color:#1b5e20; }
+  .pending { background:#fff3cd; color:#856404; }
+  table { width:100%; border-collapse:collapse; margin-top:8px; }
+  th { text-align:left; background:#f1f8f0; padding:8px; }
+  td { padding:8px; border-bottom:1px solid #eee; }
 </style>
 </head>
 <body>
-  <h1>Private Chef Christopher LaMagna Database</h1>
+<h1>Private Chef Christopher LaMagna Database</h1>
 
-  <div class="controls">
-    <input type="password" id="adminKey" placeholder="Admin key" />
-    <button id="saveKey">Save</button>
-    <button id="clearKey" class="clear">Clear</button>
-    <select id="month"></select>
-    <select id="year"></select>
-    <button id="refreshBtn">Refresh</button>
-  </div>
+<div class="toolbar">
+  <input type="password" id="key" placeholder="Admin key" style="flex:1; min-width:200px;">
+  <button id="save">Save</button>
+  <button id="clear" class="clear">Clear</button>
+  <select id="month"></select>
+  <select id="year"></select>
+  <button id="refresh">Refresh</button>
+</div>
 
-  <div class="section-title">Bookings</div>
+<div id="content" style="display:none">
+  <h2>Bookings</h2>
   <div id="bookings">Loading…</div>
 
-  <div class="section-title">Gift Cards</div>
+  <h2>Gift Cards</h2>
   <div id="giftcards">Loading…</div>
+</div>
 
 <script>
-(() => {
-  const keyInput = document.getElementById("adminKey");
-  const saveBtn = document.getElementById("saveKey");
-  const clearBtn = document.getElementById("clearKey");
-  const monthEl = document.getElementById("month");
-  const yearEl = document.getElementById("year");
-  const bookingsEl = document.getElementById("bookings");
-  const giftEl = document.getElementById("giftcards");
+// Save key
+const saved = localStorage.getItem("adminkey") || "";
+if (saved) document.getElementById("key").value = saved;
+document.getElementById("save").onclick = () => {
+  localStorage.setItem("adminkey", document.getElementById("key").value.trim());
+  load();
+};
+document.getElementById("clear").onclick = () => {
+  localStorage.removeItem("adminkey");
+  location.reload();
+};
 
-  // Restore saved key
-  const savedKey = localStorage.getItem("chefAdminKey") || "";
-  if (savedKey) keyInput.value = savedKey;
+// Month/year
+const now = new Date();
+for (let m=1;m<=12;m++) {
+  const opt = new Option(new Date(2025,m-1,1).toLocaleString("en-US",{month:"long"}), m);
+  if (m === now.getMonth()+1) opt.selected = true;
+  document.getElementById("month").appendChild(opt);
+}
+for (let y=2024;y<=2028;y++) {
+  const opt = new Option(y,y);
+  if (y === now.getFullYear()) opt.selected = true;
+  document.getElementById("year").appendChild(opt);
+}
+document.getElementById("refresh").onclick = load;
 
-  saveBtn.onclick = () => {
-    const key = keyInput.value.trim();
-    localStorage.setItem("chefAdminKey", key);
-    loadData();
-  };
-  clearBtn.onclick = () => {
-    localStorage.removeItem("chefAdminKey");
-    keyInput.value = "";
-    location.reload();
-  };
+// MAIN LOAD
+async function load() {
+  const key = localStorage.getItem("adminkey");
+  if (!key) return alert("Enter admin key first");
+  document.getElementById("content").style.display = "block";
 
-  // Populate months and years
-  const now = new Date();
-  for (let m = 1; m <= 12; m++) {
-    const opt = new Option(new Date(2025, m-1, 1).toLocaleString("en-US", { month: "long" }), m);
-    if (m === now.getMonth() + 1) opt.selected = true;
-    monthEl.appendChild(opt);
-  }
-  for (let y = 2024; y <= 2028; y++) {
-    const opt = new Option(y, y);
-    if (y === now.getFullYear()) opt.selected = true;
-    yearEl.appendChild(opt);
-  }
+  const headers = { "x-admin-key": key };
 
-  document.getElementById("refreshBtn").onclick = loadData;
-  loadData(); // auto-load if key exists
+  // Bookings
+  const params = new URLSearchParams({ month: document.getElementById("month").value, year: document.getElementById("year").value });
+  const bl = await fetch("/__admin/list-bookings?" + params, { headers });
+  const bookings = await bl.json();
 
-  async function loadData() {
-    const key = localStorage.getItem("chefAdminKey") || "";
-    if (!key) return alert("Enter and Save admin key first");
+  let html = "";
+  bookings.forEach(b => {
+    // FIX DATE BUG: force UTC → NY time (your server stores UTC, browser is EST/EDT)
+    const date = new Date(b.start_at + " UTC");  // this is the magic line
+    const dateStr = date.toLocaleDateString2 ? date.toLocaleDateString2("en-US", { month:"short", day:"numeric", year:"numeric", timeZone:"America/New_York" }) 
+                  : date.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+    const timeStr = date.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit", timeZone:"America/New_York" });
 
-    const headers = { "x-admin-key": key };
+    const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(", ");
 
-    // Bookings
-    bookingsEl.innerHTML = "Loading bookings…";
-    const params = new URLSearchParams({ month: monthEl.value, year: yearEl.value });
-    const bResp = await fetch("/__admin/list-bookings?" + params, { headers });
-    const bookings = bResp.ok ? await bResp.json() : [];
+    html += String.raw`
+<div class="card">
+  <button class="delete" onclick="if(confirm('Delete forever?')) fetch('/api/admin/bookings/${b.id}',{method:'DELETE',headers:{'x-admin-key':'${key}'}}).then(load)">Delete</button>
+  <strong>${dateStr} — ${timeStr}</strong> <span class="status ${b.status}">${b.status}</span><br>
+  <small>${b.package_title || b.package_id} • ${b.guests} guests</small><br><br>
+  <b>Name:</b> ${b.customer_name || "—"}<br>
+  <b>Email:</b> ${b.customer_email || "—"}<br>
+  <b>Phone:</b> ${b.phone || "—"}<br>
+  <b>Address:</b> ${addr || "—"}<br>
+  <b>Diet notes:</b> ${b.diet_notes || "None"}<br><br>
+  <b>$${((b.subtotal_cents||0)/100).toFixed(2)}</b>
+</div>`;
+  });
+  document.getElementById("bookings").innerHTML = html || "<i>No bookings this month.</i>";
 
-    if (!bookings.length) {
-      bookingsEl.innerHTML = '<div class="muted">No bookings this month.</div>';
-    } else {
-      bookingsEl.innerHTML = bookings.map(b => {
-        const d = new Date(b.start_at);
-        const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-        const timeStr = d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
-        const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(", ");
-        return \`<div class="card">
-          <button class="delete-btn" data-id="\${b.id}">Delete</button>
-          <div><strong>\${dateStr} — \${timeStr}</strong> <span class="status">\${b.status}</span></div>
-          <div class="muted">\${b.package_title || b.package_id || "—"} • \${b.guests || "?"} guests</div>
-          <br>
-          <div><strong>Name:</strong> \${b.customer_name || "—"}</div>
-          <div><strong>Email:</strong> \${b.customer_email || "—"}</div>
-          <div><strong>Phone:</strong> \${b.phone || "—"}</div>
-          <div><strong>Address:</strong> \${addr || "—"}</div>
-          <div><strong>Diet notes:</strong> \${b.diet_notes || "None"}</div>
-          <br>
-          <div><strong>$\${((b.subtotal_cents || 0)/100).toFixed(2)}</strong></div>
-        </div>\`;
-      }).join("");
-    }
+  // Gift cards
+  const gl = await fetch("/api/admin/giftcards", { headers });
+  const gifts = await gl.json();
+  let ghtml = "";
+  gifts.forEach(g => {
+    const d = new Date(g.created_at);
+    const ds = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+    ghtml += String.raw`
+<div class="card">
+  <button class="delete" onclick="if(confirm('Delete gift card?')) fetch('/api/admin/giftcards/${g.id}',{method:'DELETE',headers:{'x-admin-key':'${key}'}}).then(load)">Delete</button>
+  <b>${ds}</b><br>
+  Amount: $${(g.amount_cents/100).toFixed(2)}<br>
+  Recipient: ${g.recipient_name} (${g.recipient_email})<br>
+  Buyer: ${g.buyer_name} (${g.buyer_email})<br>
+  Message: ${g.message||"—"}<br>
+  Deliver on: ${g.deliver_on||"—"}
+</div>`;
+  });
+  document.getElementById("giftcards").innerHTML = ghtml || "<i>No gift cards yet.</i>";
+}
 
-    // Gift Cards
-    giftEl.innerHTML = "Loading gift cards…";
-    const gResp = await fetch("/api/admin/giftcards", { headers });
-    const gifts = gResp.ok ? await gResp.json() : [];
-
-    if (!gifts.length) {
-      giftEl.innerHTML = '<div class="muted">No gift cards sold yet.</div>';
-    } else {
-      giftEl.innerHTML = gifts.map(g => {
-        const d = new Date(g.created_at);
-        const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-        return \`<div class="card">
-          <button class="delete-btn" data-id="\${g.id}" data-type="gift">Delete</button>
-          <div><strong>\${dateStr}</strong></div>
-          <div><strong>Amount:</strong> $\${(g.amount_cents/100).toFixed(2)}</div>
-          <div><strong>Recipient:</strong> \${g.recipient_name || "—"} (\${g.recipient_email || "—"})</div>
-          <div><strong>From:</strong> \${g.buyer_name || "—"} (\${g.buyer_email || "—"})</div>
-          <div><strong>Message:</strong> \${g.message || "—"}</div>
-          <div><strong>Deliver on:</strong> \${g.deliver_on || "—"}</div>
-        </div>\`;
-      }).join("");
-    }
-
-    // Delete handlers
-    document.querySelectorAll(".delete-btn").forEach(btn => {
-      btn.onclick = async () => {
-        if (!confirm("Delete permanently?")) return;
-        const isGift = btn.dataset.type === "gift";
-        const url = isGift ? "/api/admin/giftcards/" : "/api/admin/bookings/";
-        await fetch(url + btn.dataset.id, { method: "DELETE", headers });
-        loadData();
-      };
-    });
-  }
-})();
+if (localStorage.getItem("adminkey")) load();
 </script>
 </body>
-</html>
-  `.replace(/\\`/g, "`")); // ← this tiny trick lets us use real backticks safely
+</html>`
+  );
 });
 
 // ----------------- Events JSON helpers (for pop-ups) -----------------
