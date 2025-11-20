@@ -990,10 +990,11 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
-// -------------------- ADMIN UI (FULLY FIXED + KEY PROTECTION RESTORED) --------------------
+// -------------------- ADMIN UI — FINAL WORKING VERSION --------------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.end(`<!DOCTYPE html>
+  res.end(`
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
@@ -1004,205 +1005,150 @@ app.get("/admin", (_req, res) => {
   body { font-family: Inter, sans-serif; background:#f6f7f6; margin:0; padding:20px; color:#1c1c1c; }
   h1 { font-size:22px; margin-bottom:10px; }
   .controls { display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
-  select, input, button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
+  input, select, button { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
   button { background:#1b5e20; color:white; cursor:pointer; }
   button.clear { background:#666; }
   .card { background:white; padding:16px; border-radius:12px; margin-bottom:16px; border-left:6px solid #1b5e20; position:relative; }
-  .delete-btn { background:#c62828; color:white; border:0; padding:6px 12px; border-radius:6px; font-weight:600; position:absolute; top:16px; right:16px; cursor:pointer; }
-  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; display:inline-block; }
+  .delete-btn { background:#c62828; color:white; border:0; padding:6px 12px; border-radius:6px; font-weight:600; position:absolute; top:12px; right:12px; cursor:pointer; }
+  .status { background:#d9f7e3; color:#1b5e20; padding:4px 8px; border-radius:6px; font-size:12px; }
   .muted { color:#666; font-size:14px; }
   .section-title { font-size:18px; margin:30px 0 10px; font-weight:700; }
-  .locked { filter: blur(8px); pointer-events:none; user-select:none; }
 </style>
 </head>
 <body>
   <h1>Private Chef Christopher LaMagna Database</h1>
 
   <div class="controls">
-    <input type="password" id="adminKey" placeholder="Admin key" style="flex:1;min-width:200px;" />
+    <input type="password" id="adminKey" placeholder="Admin key" />
     <button id="saveKey">Save</button>
     <button id="clearKey" class="clear">Clear</button>
-    <select id="month" style="margin-left:auto;"></select>
+    <select id="month"></select>
     <select id="year"></select>
     <button id="refreshBtn">Refresh</button>
   </div>
 
-  <div id="content" class="locked">
-    <div class="section-title">Bookings</div>
-    <div id="bookings">Locked — enter admin key above</div>
+  <div class="section-title">Bookings</div>
+  <div id="bookings">Loading…</div>
 
-    <div class="section-title">Gift Cards</div>
-    <div id="giftcards">Locked — enter admin key above</div>
-  </div>
+  <div class="section-title">Gift Cards</div>
+  <div id="giftcards">Loading…</div>
 
 <script>
-(function(){
+(() => {
   const keyInput = document.getElementById("adminKey");
   const saveBtn = document.getElementById("saveKey");
   const clearBtn = document.getElementById("clearKey");
-  const content = document.getElementById("content");
-  const bookingsEl = document.getElementById("bookings");
-  const giftEl = document.getElementById("giftcards");
   const monthEl = document.getElementById("month");
   const yearEl = document.getElementById("year");
+  const bookingsEl = document.getElementById("bookings");
+  const giftEl = document.getElementById("giftcards");
 
-  // Load saved key
-  const savedKey = localStorage.getItem("adminKey") || "";
-  if (savedKey) {
-    keyInput.value = savedKey;
-    checkKey(savedKey);
-  }
+  // Restore saved key
+  const savedKey = localStorage.getItem("chefAdminKey") || "";
+  if (savedKey) keyInput.value = savedKey;
 
   saveBtn.onclick = () => {
     const key = keyInput.value.trim();
-    localStorage.setItem("adminKey", key);
-    checkKey(key);
+    localStorage.setItem("chefAdminKey", key);
+    loadData();
   };
-
   clearBtn.onclick = () => {
-    localStorage.removeItem("adminKey");
+    localStorage.removeItem("chefAdminKey");
     keyInput.value = "";
-    content.classList.add("locked");
-    bookingsEl.innerHTML = giftEl.innerHTML = "Locked — enter admin key above";
+    location.reload();
   };
 
-  async function checkKey(key) {
-    if (!key) return;
-    const r = await fetch("/__admin/list-bookings?year=2025&month=1", {
-      headers: { "x-admin-key": key }
-    });
-    if (r.ok) {
-      content.classList.remove("locked");
-      loadData();
-    } else {
-      content.classList.add("locked");
-      alert("Wrong admin key");
-    }
-  }
-
-  // Populate month/year
+  // Populate months and years
   const now = new Date();
-  const thisMonth = now.getMonth() + 1;
-  const thisYear = now.getFullYear();
   for (let m = 1; m <= 12; m++) {
-    const opt = document.createElement("option");
-    opt.value = m;
-    opt.text = new Date(thisYear, m-1, 1).toLocaleString(" dage", { month: "long" });
-    if (m === thisMonth) opt.selected = true;
+    const opt = new Option(new Date(2025, m-1, 1).toLocaleString("en-US", { month: "long" }), m);
+    if (m === now.getMonth() + 1) opt.selected = true;
     monthEl.appendChild(opt);
   }
-  for (let y = thisYear-1; y <= thisYear+2; y++) {
-    const opt = document.createElement("option");
-    opt.value = opt.text = y;
-    if (y === thisYear) opt.selected = true;
+  for (let y = 2024; y <= 2028; y++) {
+    const opt = new Option(y, y);
+    if (y === now.getFullYear()) opt.selected = true;
     yearEl.appendChild(opt);
   }
 
   document.getElementById("refreshBtn").onclick = loadData;
+  loadData(); // auto-load if key exists
 
-  async function loadBookings(){
-    bookingsEl.innerHTML = "Loading…";
+  async function loadData() {
+    const key = localStorage.getItem("chefAdminKey") || "";
+    if (!key) return alert("Enter and Save admin key first");
+
+    const headers = { "x-admin-key": key };
+
+    // Bookings
+    bookingsEl.innerHTML = "Loading bookings…";
     const params = new URLSearchParams({ month: monthEl.value, year: yearEl.value });
-    const r = await fetch("/__admin/list-bookings?" + params, {
-      headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
-    });
-    const list = await r.json();
+    const bResp = await fetch("/__admin/list-bookings?" + params, { headers });
+    const bookings = bResp.ok ? await bResp.json() : [];
 
-    if (!Array.isArray(list) || list.length === 0) {
+    if (!bookings.length) {
       bookingsEl.innerHTML = '<div class="muted">No bookings this month.</div>';
-      return;
+    } else {
+      bookingsEl.innerHTML = bookings.map(b => {
+        const d = new Date(b.start_at);
+        const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+        const timeStr = d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+        const addr = [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(", ");
+        return \`<div class="card">
+          <button class="delete-btn" data-id="\${b.id}">Delete</button>
+          <div><strong>\${dateStr} — \${timeStr}</strong> <span class="status">\${b.status}</span></div>
+          <div class="muted">\${b.package_title || b.package_id || "—"} • \${b.guests || "?"} guests</div>
+          <br>
+          <div><strong>Name:</strong> \${b.customer_name || "—"}</div>
+          <div><strong>Email:</strong> \${b.customer_email || "—"}</div>
+          <div><strong>Phone:</strong> \${b.phone || "—"}</div>
+          <div><strong>Address:</strong> \${addr || "—"}</div>
+          <div><strong>Diet notes:</strong> \${b.diet_notes || "None"}</div>
+          <br>
+          <div><strong>$\${((b.subtotal_cents || 0)/100).toFixed(2)}</strong></div>
+        </div>\`;
+      }).join("");
     }
 
-    let html = "";
-    list.forEach(b => {
-      const d = new Date(b.start_at);
-      const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-      const timeStr = d.toLocaleTimeString("en-US", { hour:"numeric", minute:"2-digit" });
+    // Gift Cards
+    giftEl.innerHTML = "Loading gift cards…";
+    const gResp = await fetch("/api/admin/giftcards", { headers });
+    const gifts = gResp.ok ? await gResp.json() : [];
 
-      html += '<div class="card">' +
-        '<button class="delete-btn" data-id="' + b.id + '">Delete</button>' +
-        '<div><strong>' + dateStr + ' — ' + timeStr + '</strong> <span class="status">' + (b.status || "unknown") + '</span></div>' +
-        '<div class="muted">' + (b.package_title || b.package_id || "—") + ' • ' + (b.guests || "?") + ' guests</div>' +
-        '<br>' +
-        '<div><strong>Name:</strong> ' + (b.customer_name || "—") + '</div>' +
-        '<div><strong>Email:</strong> ' + (b.customer_email || "—") + '</div>' +
-        '<div><strong>Phone:</strong> ' + (b.phone || "—") + '</div>' +
-        '<div><strong>Address:</strong> ' + [b.address_line1, b.city, b.state, b.zip].filter(Boolean).join(", ") + '</div>' +
-        '<div><strong>Diet notes:</strong> ' + (b.diet_notes || "None") + '</div>' +
-        '<br>' +
-        '<div><strong>$' + ((b.subtotal_cents || 0)/100).toFixed(2) + '</strong></div>' +
-      '</div>';
-    });
-    bookingsEl.innerHTML = html;
+    if (!gifts.length) {
+      giftEl.innerHTML = '<div class="muted">No gift cards sold yet.</div>';
+    } else {
+      giftEl.innerHTML = gifts.map(g => {
+        const d = new Date(g.created_at);
+        const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
+        return \`<div class="card">
+          <button class="delete-btn" data-id="\${g.id}" data-type="gift">Delete</button>
+          <div><strong>\${dateStr}</strong></div>
+          <div><strong>Amount:</strong> $\${(g.amount_cents/100).toFixed(2)}</div>
+          <div><strong>Recipient:</strong> \${g.recipient_name || "—"} (\${g.recipient_email || "—"})</div>
+          <div><strong>From:</strong> \${g.buyer_name || "—"} (\${g.buyer_email || "—"})</div>
+          <div><strong>Message:</strong> \${g.message || "—"}</div>
+          <div><strong>Deliver on:</strong> \${g.deliver_on || "—"}</div>
+        </div>\`;
+      }).join("");
+    }
 
+    // Delete handlers
     document.querySelectorAll(".delete-btn").forEach(btn => {
       btn.onclick = async () => {
-        if (confirm("Delete this booking permanently?")) {
-          await fetch("/api/admin/bookings/" + btn.dataset.id, {
-            method: "DELETE",
-            headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
-          });
-          loadBookings();
-        }
+        if (!confirm("Delete permanently?")) return;
+        const isGift = btn.dataset.type === "gift";
+        const url = isGift ? "/api/admin/giftcards/" : "/api/admin/bookings/";
+        await fetch(url + btn.dataset.id, { method: "DELETE", headers });
+        loadData();
       };
     });
   }
-
-  async function loadGiftCards(){
-    giftEl.innerHTML = "Loading…";
-    const r = await fetch("/api/admin/giftcards", {
-      headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
-    });
-    const list = await r.json();
-
-    if (!list || list.length === 0) {
-      giftEl.innerHTML = '<div class="muted">No gift cards sold yet.</div>';
-      return;
-    }
-
-    let html = "";
-    list.forEach(g => {
-      const d = new Date(g.created_at);
-      const dateStr = d.toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
-      html += '<div class="card">' +
-        '<button class="delete-btn" data-id="' + g.id + '" data-type="gift">Delete</button>' +
-        '<div><strong>' + dateStr + '</strong></div>' +
-        '<div><strong>Amount:</strong> $' + (g.amount_cents/100).toFixed(2) + '</div>' +
-        '<div><strong>Recipient:</strong> ' + (g.recipient_name || "—") + ' (' + (g.recipient_email || "—") + ')</div>' +
-        '<div><strong>From:</strong> ' + (g.buyer_name || "—") + ' (' + (g.buyer_email || "—") + ')</div>' +
-        '<div><strong>Message:</strong> ' + (g.message || "—") + '</div>' +
-        '<div><strong>Deliver on:</strong> ' + (g.deliver_on || "—") + '</div>' +
-        '<div><strong>Stripe:</strong> ' + g.stripe_session_id + '</div>' +
-      '</div>';
-    });
-    giftEl.innerHTML = html;
-
-    document.querySelectorAll(".delete-btn[data-type='gift']").forEach(btn => {
-      btn.onclick = async () => {
-        if (confirm("Delete this gift card permanently?")) {
-          await fetch("/api/admin/giftcards/" + btn.dataset.id, {
-            method: "DELETE",
-            headers: { "x-admin-key": localStorage.getItem("adminKey") || "" }
-          });
-          loadGiftCards();
-        }
-      };
-    });
-  }
-
-  function loadData(){
-    if (!content.classList.contains("locked")) {
-      loadBookings();
-      loadGiftCards();
-    }
-  }
-
-  // Auto-refresh when key is correct
-  if (savedKey && content.classList.contains("locked") === false) loadData();
 })();
 </script>
 </body>
-</html>`);
+</html>
+  `.replace(/\\`/g, "`")); // ← this tiny trick lets us use real backticks safely
 });
 
 // ----------------- Events JSON helpers (for pop-ups) -----------------
