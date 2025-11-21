@@ -69,7 +69,6 @@ async function initSchema() {
       ADD COLUMN IF NOT EXISTS with_basket BOOLEAN DEFAULT false,
       ADD COLUMN IF NOT EXISTS original_amount_cents INTEGER NOT NULL DEFAULT 0;
   `);
-  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS blackout_dates (
