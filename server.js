@@ -196,14 +196,30 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const session = event.data.object;
       const md = session.metadata || {};
       
-            // GIFT CARD
+      // GIFT CARD — FINAL FIXED VERSION
       if (md.type === "gift_card") {
         const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
 
         await pool.query(`
-          INSERT INTO gift_cards (code, amount_cents, original_amount_cents, with_basket, buyer_name, buyer_email, recipient_name, recipient_email, message, deliver_on, stripe_session_id, status)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'active')
-        `, [code, md.amount_cents, md.amount_cents, md.with_basket==="true", md.buyer_name, md.buyer_email, md.recipient_name, md.recipient_email, md.message || null, md.deliver_on || null, session.id]);
+          INSERT INTO gift_cards (
+            code, amount_cents, original_amount_cents, with_basket,
+            buyer_name, buyer_email, recipient_name, recipient_email,
+            message, deliver_on, stripe_session_id, status
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+        `, [
+          code,
+          md.amount_cents,
+          md.amount_cents,
+          md.with_basket === "true",
+          md.buyer_name,
+          md.buyer_email,
+          md.recipient_name,
+          md.recipient_email,
+          md.message || null,
+          md.deliver_on || null,
+          session.id,
+          'active'
+        ]);
 
         await sendEmail({
           to: md.buyer_email,
@@ -213,6 +229,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
 
         return res.json({received: true});
       }
+      
       const bookingId = md.booking_id ? Number(md.booking_id) : null;
       const eventDate = md.event_date; // "YYYY-MM-DD"
 
