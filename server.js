@@ -63,6 +63,14 @@ async function initSchema() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS gift_cards_code_idx ON gift_cards (code);`);
 
+    // One-time safety fix for old tables missing columns
+  await pool.query(`
+    ALTER TABLE gift_cards
+      ADD COLUMN IF NOT EXISTS with_basket BOOLEAN DEFAULT false,
+      ADD COLUMN IF NOT EXISTS original_amount_cents INTEGER NOT NULL DEFAULT 0;
+  `);
+  );
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS blackout_dates (
       id BIGSERIAL PRIMARY KEY,
