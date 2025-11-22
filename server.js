@@ -1505,10 +1505,6 @@ app.get("/__admin/list-giftcards", requireAdmin, async (req, res) => {
   }
 });
 
-// ← then your existing app.listen stays exactly where it is
-app.listen(port, () => {
-  console.log(`Chef booking server listening on ${port}`);
-});
 app.listen(port, () => {
   console.log(`Chef booking server listening on ${port}`);
 });
