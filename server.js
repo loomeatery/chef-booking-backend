@@ -1207,12 +1207,12 @@ app.get("/admin", (_req, res) => {
 &nbsp;&nbsp;}
 &nbsp;&nbsp;  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); await loadGiftCards(); }
 
-   async function loadGiftCards(){
+  async function loadGiftCards(){
     const wrap = $("giftcards");
     if (!wrap) return;
     wrap.innerHTML = "";
     try{
-      const list = await (await fetch("/__admin/list_giftcards")).json();  // ← underscore!
+      const list = await (await fetch("/__admin/list_giftcards")).json();
       if (!Array.isArray(list) || list.length === 0) {
         wrap.innerHTML = '<div class="empty">No gift cards purchased yet.</div>';
         return;
@@ -1221,13 +1221,12 @@ app.get("/admin", (_req, res) => {
         const row = document.createElement("div");
         row.className = "evtrow";
         row.style.gridTemplateColumns = "140px 100px 1fr 1fr 120px";
-        row.innerHTML = `
-          <div><strong>${gc.code || ''}</strong></div>
-          <div>$${(gc.amount_cents/100).toFixed(2)}</div>
-          <div class="small">${gc.buyer_name || ''}<br>${gc.buyer_email || ''}</div>
-          <div class="small">${gc.recipient_name || '—'}<br>${gc.recipient_email || '—'}</div>
-          <div class="small">${new Date(gc.created_at).toLocaleDateString()}</div>
-        `;
+        row.innerHTML = 
+          "<div><strong>" + (gc.code || '') + "</strong></div>" +
+          "<div>$" + (gc.amount_cents/100).toFixed(2) + "</div>" +
+          "<div class=\"small\">" + (gc.buyer_name || '') + "<br>" + (gc.buyer_email || '') + "</div>" +
+          "<div class=\"small\">" + (gc.recipient_name || '—') + "<br>" + (gc.recipient_email || '—') + "</div>" +
+          "<div class=\"small\">" + new Date(gc.created_at).toLocaleDateString() + "</div>";
         wrap.appendChild(row);
       });
     }catch(e){
