@@ -1004,7 +1004,7 @@ app.get("/admin", (_req, res) => {
     <div class="head">Gift Cards</div>
     <div class="pad">
       <div class="small" style="color:#666;margin-bottom:8px">
-        All gift card purchases — code, amount, buyer, recipient
+      All gift card purchases &mdash; code, amount, buyer, recipient
       </div>
       <div class="list" id="giftcards"></div>
     </div>
