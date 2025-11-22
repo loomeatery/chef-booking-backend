@@ -1009,16 +1009,6 @@ app.get("/admin", (_req, res) => {
 &nbsp;&nbsp;&nbsp;&nbsp;</div>
 &nbsp;&nbsp;</div>
 </div>
-  <!-- GIFT CARDS CARD -->
-  <div class="card" style="margin-top:16px">
-    <div class="head">Gift Cards</div>
-    <div class="pad">
-      <div class="small" style="color:#666;margin-bottom:8px">
-      All gift card purchases &mdash; code, amount, buyer, recipient
-      </div>
-      <div class="list" id="giftcards"></div>
-    </div>
-  </div>
 <script>
 (function(){
 &nbsp;&nbsp;const BASE = "";
@@ -1215,34 +1205,7 @@ app.get("/admin", (_req, res) => {
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;wrap.appendChild(div);
 &nbsp;&nbsp;&nbsp;&nbsp;}
 &nbsp;&nbsp;}
-&nbsp;&nbsp;async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); await loadGiftCards(); }
-
-  async function loadGiftCards(){
-    const wrap = $("giftcards");
-    if (!wrap) return;
-    wrap.innerHTML = "";
-    try{
-      const list = await (await fetch("/__admin/list_giftcards")).json();
-      if (!Array.isArray(list) || list.length === 0) {
-        wrap.innerHTML = '<div class="empty">No gift cards purchased yet.</div>';
-        return;
-      }
-      list.forEach(gc => {
-        const row = document.createElement("div");
-        row.className = "evtrow";
-        row.style.gridTemplateColumns = "140px 100px 1fr 1fr 120px";
-        row.innerHTML = "<div><strong>" + (gc.code || '') + "</strong></div>" +
-                        "<div>$" + (gc.amount_cents/100).toFixed(2) + "</div>" +
-                        "<div class=\"small\">" + (gc.buyer_name || '') + "<br>" + (gc.buyer_email || '') + "</div>" +
-                        "<div class=\"small\">" + (gc.recipient_name || '-') + "<br>" + (gc.recipient_email || '-') + "</div>" +
-                        "<div class=\"small\">" + new Date(gc.created_at).toLocaleDateString() + "</div>";
-        wrap.appendChild(row);
-      });
-    }catch(e){
-      wrap.innerHTML = '<div class="empty" style="color:var(--bad)">Error loading gift cards</div>';
-    }
-  }
-  
+&nbsp;&nbsp;async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); }
 &nbsp;&nbsp;loadAll();
 &nbsp;&nbsp;// Add blackout actions
 &nbsp;&nbsp;$("bdAdd").addEventListener("click", async ()=>{
