@@ -1495,7 +1495,7 @@ app.get("/gift-card-success", (req, res) => {
   </body></html>`);
 });
 
-app.get("/__admin/list_giftcards", requireAdmin, async (req, res) => {
+app.get("/__admin/list-giftcards", async (req, res) => {  
   try {
     const r = await pool.query(`SELECT * FROM gift_cards ORDER BY created_at DESC`);
     res.json(r.rows);
