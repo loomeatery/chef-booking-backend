@@ -866,6 +866,16 @@ app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   }
 });
 
+app.get("/__admin/list_giftcards", requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(`SELECT * FROM gift_cards ORDER BY created_at DESC`);
+    res.json(r.rows);
+  } catch (e) {
+    console.error("list_giftcards error:", e);
+    res.status(500).json([]);
+  }
+});
+
 // ----------------- Admin list pages (JSON for admin UI) -----------------
 app.get("/__admin/list-blackouts", requireAdmin, async (req, res) => {
   try {
@@ -1205,9 +1215,9 @@ app.get("/admin", (_req, res) => {
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;wrap.appendChild(div);
 &nbsp;&nbsp;&nbsp;&nbsp;}
 &nbsp;&nbsp;}
-&nbsp;&nbsp;  async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); await loadGiftCards(); }
+&nbsp;&nbsp;async function loadAll(){ await Promise.all([loadBookings(), loadBlackouts()]); await loadEventsAdmin(); await loadGiftCards(); }
 
-   async function loadGiftCards(){
+  async function loadGiftCards(){
     const wrap = $("giftcards");
     if (!wrap) return;
     wrap.innerHTML = "";
@@ -1224,7 +1234,7 @@ app.get("/admin", (_req, res) => {
         row.innerHTML = "<div><strong>" + (gc.code || '') + "</strong></div>" +
                         "<div>$" + (gc.amount_cents/100).toFixed(2) + "</div>" +
                         "<div class=\"small\">" + (gc.buyer_name || '') + "<br>" + (gc.buyer_email || '') + "</div>" +
-                        "<div class=\"small\">" + (gc.recipient_name || '&mdash;') + "<br>" + (gc.recipient_email || '&mdash;') + "</div>" +
+                        "<div class=\"small\">" + (gc.recipient_name || '-') + "<br>" + (gc.recipient_email || '-') + "</div>" +
                         "<div class=\"small\">" + new Date(gc.created_at).toLocaleDateString() + "</div>";
         wrap.appendChild(row);
       });
@@ -1494,16 +1504,6 @@ app.get("/gift-card-success", (req, res) => {
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script>confetti({particleCount:180,spread:70,origin:{y:0.6}});</script>
   </body></html>`);
-});
-
-app.get("/__admin/list_giftcards", requireAdmin, async (req, res) => { 
-  try {
-    const r = await pool.query(`SELECT * FROM gift_cards ORDER BY created_at DESC`);
-    res.json(r.rows);
-  } catch (e) {
-    console.error("list-giftcards error:", e);
-    res.status(500).json([]);
-  }
 });
 
 app.listen(port, () => {
