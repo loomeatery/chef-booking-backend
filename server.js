@@ -231,7 +231,26 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
         await sendEmail({
           to: md.buyer_email,
           subject: `Gift Card $${(Number(md.amount_cents)/100).toFixed(2)} Confirmed`,
-          html: `<h2>Thank you!</h2><p>Your gift card is confirmed.</p><p>Redeem code: <strong>${code}</strong></p><p>Chef Chris will send the PDF within 24 hours.</p>`
+          html: `
+            <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
+              ${logoBlock}
+              <h2 style="margin:0 0 8px">You're In.</h2>
+              <p>Hi ${md.buyer_name.split(" ")[0]},</p>
+              <p>Thanks for sending a Private Chef Chris gift card${md.with_basket === "true" ? " + Fresh-Baked Gift Basket" : ""}.</p>
+              <p>We’ve received your payment: <strong>$${(Number(md.amount_cents)/100).toFixed(2)}</strong>.</p>
+
+              <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
+                <div style="font-size:13px;color:#555">Redeem code</div>
+                <div style="font-weight:800;font-size:20px;letter-spacing:1px">${code}</div>
+              </div>
+
+              <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
+              <p>Chef Chris will personally prepare and send the PDF gift card within 24 hours.</p>
+
+              <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
+              <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
+            </div>
+          `
         });
 
         return res.json({received: true});
