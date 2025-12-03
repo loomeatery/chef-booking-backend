@@ -294,13 +294,12 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
   ]);
 
   // 🔥 GENERATE PDF
-  const pdfBytes = await generateGiftCardPDF({
-    code,
-    amount: Number(md.amount_cents),
-    buyerName: md.buyer_name,
-    recipientName: md.recipient_name,
-    message: md.message || ""
-  });
+const pdfBytes = await generateGiftCardPDF({
+  code,
+  amount: Number(md.amount_cents),
+  buyerName: md.buyer_name,
+  recipientName: md.recipient_name
+});
 
   // Convert PDF bytes → Base64 string
   const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
