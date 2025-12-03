@@ -1751,7 +1751,7 @@ app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
 app.post("/api/giftcards/create-checkout", express.json(), async (req, res) => {
   try {
     const { amount, basket = false, buyer_name, buyer_email, recipient_name, recipient_email, message = "", deliver_on } = req.body;
-    if (amount < 25 || !buyer_name || !buyer_email || !recipient_name || !recipient_email) return res.status(400).json({error: "Invalid"});
+    if (amount < 1 || !buyer_name || !buyer_email || !recipient_name || !recipient_email) return res.status(400).json({error: "Invalid"});
 
     const amountCents = Math.round(amount * 100);
     const basketCents = basket ? 12500 : 0;
