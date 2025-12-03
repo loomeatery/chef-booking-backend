@@ -1606,7 +1606,6 @@ app.get("/booking-success", async (req, res) => {
 // ======================================================
 // =============== POP-UP EVENTS MODULE ==================
 // ======================================================
-import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
