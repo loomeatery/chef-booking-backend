@@ -32,8 +32,8 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
 
   // TO:
   page.drawText(recipientName || "", {
-    x: 115,
-    y: 390,
+    x: 64,
+    y: 139.5,
     size: 14,
     font: bold,
     color: textColor
@@ -41,8 +41,8 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
 
   // FROM:
   page.drawText(buyerName || "", {
-    x: 115,
-    y: 318,
+    x: 78,
+    y: 173,
     size: 14,
     font: bold,
     color: textColor
@@ -50,8 +50,8 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
 
   // AMOUNT:
   page.drawText(`$${(amount / 100).toFixed(2)}`, {
-    x: 115,
-    y: 275,
+    x: 100,
+    y: 204,
     size: 14,
     font: bold,
     color: textColor
@@ -59,8 +59,8 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
 
   // CODE:
   page.drawText(code, {
-    x: 115,
-    y: 233,
+    x: 78,
+    y: 230,
     size: 14,
     font: bold,
     color: textColor
