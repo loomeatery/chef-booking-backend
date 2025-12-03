@@ -10,6 +10,65 @@ import pkg from "pg";
 
 dotenv.config();
 
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import fs from "fs";
+import path from "path";
+
+// --- PDF generator ---
+async function generateGiftCardPDF({ code, amount, buyerName, recipientName, message }) {
+  const templatePath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
+
+  const pdfBytes = fs.readFileSync(templatePath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+
+  const page = pdfDoc.getPages()[0];
+  const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const textColor = rgb(0.2, 0.2, 0.2);
+
+  page.drawText(`Gift Card Code: ${code}`, {
+    x: 50,
+    y: 500,
+    size: 20,
+    font,
+    color: textColor
+  });
+
+  page.drawText(`Amount: $${(amount/100).toFixed(2)}`, {
+    x: 50,
+    y: 460,
+    size: 18,
+    font,
+    color: textColor
+  });
+
+  page.drawText(`To: ${recipientName}`, {
+    x: 50,
+    y: 420,
+    size: 16,
+    font,
+    color: textColor
+  });
+
+  page.drawText(`From: ${buyerName}`, {
+    x: 50,
+    y: 390,
+    size: 16,
+    font,
+    color: textColor
+  });
+
+  page.drawText(`Message: ${message}`, {
+    x: 50,
+    y: 350,
+    size: 12,
+    font,
+    color: textColor
+  });
+
+  return await pdfDoc.save();
+}
+
 const app  = express();
 const port = process.env.PORT || 3000;
 
@@ -152,16 +211,21 @@ function codeOK(code) {
 }
 
 // ----------------- Email helper (Resend) -----------------
-async function sendEmail({ to, subject, html }) {
+async function sendEmail({ to, subject, html, attachments = [] }) {
   try {
     const key = process.env.RESEND_API_KEY;
-    if (!key) { console.warn("RESEND_API_KEY not set; skipping email."); return; }
+    if (!key) { 
+      console.warn("RESEND_API_KEY not set; skipping email."); 
+      return; 
+    }
 
     const payload = {
       from: process.env.FROM_EMAIL || "Chef Chris <bookings@privatechefchristopherlamagna.com>",
       to: Array.isArray(to) ? to : [to],
       subject,
       html,
+      // Only include attachments if provided
+      attachments: attachments.length > 0 ? attachments : undefined,
       reply_to: process.env.REPLY_TO || "loomeatery@gmail.com"
     };
 
@@ -173,6 +237,7 @@ async function sendEmail({ to, subject, html }) {
       },
       body: JSON.stringify(payload)
     });
+
     if (!resp.ok) {
       console.error("Email send failed:", await resp.text());
     } else {
@@ -205,34 +270,58 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       
       // GIFT CARD — FINAL FIXED VERSION
       if (md.type === "gift_card") {
-        const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
+  const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
 
-        await pool.query(`
-          INSERT INTO gift_cards (
-            code, amount_cents, original_amount_cents, with_basket,
-            buyer_name, buyer_email, recipient_name, recipient_email,
-            message, deliver_on, stripe_session_id, status
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-        `, [
-          code,
-          md.amount_cents,
-          md.amount_cents,
-          md.with_basket === "true",
-          md.buyer_name,
-          md.buyer_email,
-          md.recipient_name,
-          md.recipient_email,
-          md.message || null,
-          md.deliver_on || null,
-          session.id,
-          'active'
-        ]);
+  await pool.query(`
+    INSERT INTO gift_cards (
+      code, amount_cents, original_amount_cents, with_basket,
+      buyer_name, buyer_email, recipient_name, recipient_email,
+      message, deliver_on, stripe_session_id, status
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+  `, [
+    code,
+    md.amount_cents,
+    md.amount_cents,
+    md.with_basket === "true",
+    md.buyer_name,
+    md.buyer_email,
+    md.recipient_name,
+    md.recipient_email,
+    md.message || null,
+    md.deliver_on || null,
+    session.id,
+    'active'
+  ]);
 
-        await sendEmail({
-          to: md.buyer_email,
-          subject: `Gift Card $${(Number(md.amount_cents)/100).toFixed(2)} Confirmed`,
-          html: `<h2>Thank you!</h2><p>Your gift card is confirmed.</p><p>Redeem code: <strong>${code}</strong></p><p>Chef Chris will send the PDF within 24 hours.</p>`
-        });
+  // 🔥 GENERATE PDF
+  const pdfBytes = await generateGiftCardPDF({
+    code,
+    amount: Number(md.amount_cents),
+    buyerName: md.buyer_name,
+    recipientName: md.recipient_name,
+    message: md.message || ""
+  });
+
+  // Convert PDF bytes → Base64 string
+  const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
+
+  // 📧 SEND EMAIL WITH ATTACHMENT
+  await sendEmail({
+    to: md.buyer_email,
+    subject: `Your Chef Chris Gift Card — ${code}`,
+    html: `
+      <h2>Thank you!</h2>
+      <p>Your gift card is attached as a PDF.</p>
+      <p>Code: <strong>${code}</strong></p>
+    `,
+    attachments: [
+      {
+        filename: "Chef-Chris-Gift-Card.pdf",
+        content: pdfBase64,
+        type: "application/pdf"
+      }
+    ]
+  });
 
         return res.json({received: true});
       }
