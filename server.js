@@ -13,6 +13,7 @@ dotenv.config();
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 // --- PDF generator ---
 async function generateGiftCardPDF({ code, amount, buyerName, recipientName, message }) {
@@ -1606,9 +1607,6 @@ app.get("/booking-success", async (req, res) => {
 // ======================================================
 // =============== POP-UP EVENTS MODULE ==================
 // ======================================================
-import path from "path";
-import { fileURLToPath } from "url";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
 const eventsFile = path.join(__dirname, "events.json");
