@@ -18,54 +18,60 @@ import { fileURLToPath } from "url";
 // --- PDF generator ---
 async function generateGiftCardPDF({ code, amount, buyerName, recipientName, message }) {
   const templatePath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
-
   const pdfBytes = fs.readFileSync(templatePath);
+
   const pdfDoc = await PDFDocument.load(pdfBytes);
-
   const page = pdfDoc.getPages()[0];
+
   const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const color = rgb(0, 0, 0);
 
-  const textColor = rgb(0.2, 0.2, 0.2);
-
-  page.drawText(`Gift Card Code: ${code}`, {
-    x: 50,
-    y: 500,
-    size: 20,
-    font,
-    color: textColor
-  });
-
-  page.drawText(`Amount: $${(amount/100).toFixed(2)}`, {
-    x: 50,
-    y: 460,
-    size: 18,
-    font,
-    color: textColor
-  });
-
-  page.drawText(`To: ${recipientName}`, {
-    x: 50,
-    y: 420,
+  // These coordinates match the actual layout of your card.
+  // (Left column of the PDF)
+  page.drawText(recipientName || "", {
+    x: 75,
+    y: 312,
     size: 16,
     font,
-    color: textColor
+    color
   });
 
-  page.drawText(`From: ${buyerName}`, {
-    x: 50,
-    y: 390,
+  page.drawText(buyerName || "", {
+    x: 75,
+    y: 275,
     size: 16,
     font,
-    color: textColor
+    color
   });
 
-  page.drawText(`Message: ${message}`, {
-    x: 50,
-    y: 350,
-    size: 12,
+  page.drawText(`$${(amount / 100).toFixed(2)}`, {
+    x: 75,
+    y: 238,
+    size: 16,
     font,
-    color: textColor
+    color
   });
+
+  page.drawText(code || "", {
+    x: 75,
+    y: 200,
+    size: 16,
+    font,
+    color
+  });
+
+  // Optional message (wrapped in a small area)
+  if (message) {
+    page.drawText(message, {
+      x: 75,
+      y: 160,
+      size: 12,
+      font,
+      color,
+      maxWidth: 250,
+      lineHeight: 14
+    });
+  }
 
   return await pdfDoc.save();
 }
@@ -306,23 +312,23 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
   // Convert PDF bytes → Base64 string
   const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
 
-  // 📧 SEND EMAIL WITH ATTACHMENT
-  await sendEmail({
-    to: md.buyer_email,
-    subject: `Your Chef Chris Gift Card — ${code}`,
-    html: `
-      <h2>Thank you!</h2>
-      <p>Your gift card is attached as a PDF.</p>
-      <p>Code: <strong>${code}</strong></p>
-    `,
-    attachments: [
-      {
-        filename: "Chef-Chris-Gift-Card.pdf",
-        content: pdfBase64,
-        type: "application/pdf"
-      }
-    ]
-  });
+// 📧 SEND EMAIL WITH ATTACHMENT — BOTH BUYER + RECIPIENT
+await sendEmail({
+  to: [md.buyer_email, md.recipient_email],  // SEND TO BOTH!
+  subject: `Your Chef Chris Gift Card — ${code}`,
+  html: `
+    <h2>Thank you!</h2>
+    <p>Your gift card is attached as a PDF.</p>
+    <p>Code: <strong>${code}</strong></p>
+  `,
+  attachments: [
+    {
+      filename: "Chef-Chris-Gift-Card.pdf",
+      content: pdfBase64,
+      type: "application/pdf"
+    }
+  ]
+});
 
         return res.json({received: true});
       }
