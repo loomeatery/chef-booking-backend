@@ -18,60 +18,64 @@ import { fileURLToPath } from "url";
 // --- PDF generator ---
 async function generateGiftCardPDF({ code, amount, buyerName, recipientName, message }) {
   const templatePath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
+
   const pdfBytes = fs.readFileSync(templatePath);
-
   const pdfDoc = await PDFDocument.load(pdfBytes);
+
   const page = pdfDoc.getPages()[0];
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const textColor = rgb(0, 0, 0);
 
-  const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const color = rgb(0, 0, 0);
+  // Coordinates are measured from bottom-left corner.
+  // Adjust these ONLY if needed after testing.
 
-  // These coordinates match the actual layout of your card.
-  // (Left column of the PDF)
+  // TO:
   page.drawText(recipientName || "", {
-    x: 75,
-    y: 312,
-    size: 16,
-    font,
-    color
+    x: 120,
+    y: 335,
+    size: 14,
+    font: bold,
+    color: textColor
   });
 
+  // FROM:
   page.drawText(buyerName || "", {
-    x: 75,
-    y: 275,
-    size: 16,
-    font,
-    color
+    x: 120,
+    y: 290,
+    size: 14,
+    font: bold,
+    color: textColor
   });
 
-  page.drawText(`$${(amount / 100).toFixed(2)}`, {
-    x: 75,
-    y: 238,
-    size: 16,
-    font,
-    color
+  // AMOUNT:
+  page.drawText(`$${(amount/100).toFixed(2)}`, {
+    x: 120,
+    y: 245,
+    size: 14,
+    font: bold,
+    color: textColor
   });
 
-  page.drawText(code || "", {
-    x: 75,
+  // CODE:
+  page.drawText(code, {
+    x: 120,
     y: 200,
-    size: 16,
-    font,
-    color
+    size: 14,
+    font: bold,
+    color: textColor
   });
 
-  // Optional message (wrapped in a small area)
-  if (message) {
-    page.drawText(message, {
-      x: 75,
-      y: 160,
-      size: 12,
-      font,
-      color,
-      maxWidth: 250,
-      lineHeight: 14
-    });
-  }
+  // OPTIONAL MESSAGE (under TO:)
+  page.drawText(message || "", {
+    x: 120,
+    y: 315,
+    size: 12,
+    font,
+    color: textColor,
+    maxWidth: 260,
+    lineHeight: 14
+  });
 
   return await pdfDoc.save();
 }
