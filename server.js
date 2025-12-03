@@ -16,7 +16,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 // --- PDF generator ---
-async function generateGiftCardPDF({ code, amount, buyerName, recipientName, message }) {
+async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
   const templatePath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
 
   const pdfBytes = fs.readFileSync(templatePath);
@@ -27,13 +27,13 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName, mes
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const textColor = rgb(0, 0, 0);
 
-  // Coordinates are measured from bottom-left corner.
-  // Adjust these ONLY if needed after testing.
+  // ---- ALIGNED COORDINATES BASED ON YOUR TEMPLATE ----
+  // (Only TO / FROM / AMOUNT / CODE)
 
   // TO:
   page.drawText(recipientName || "", {
-    x: 120,
-    y: 335,
+    x: 115,
+    y: 390,
     size: 14,
     font: bold,
     color: textColor
@@ -41,17 +41,17 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName, mes
 
   // FROM:
   page.drawText(buyerName || "", {
-    x: 120,
-    y: 290,
+    x: 115,
+    y: 318,
     size: 14,
     font: bold,
     color: textColor
   });
 
   // AMOUNT:
-  page.drawText(`$${(amount/100).toFixed(2)}`, {
-    x: 120,
-    y: 245,
+  page.drawText(`$${(amount / 100).toFixed(2)}`, {
+    x: 115,
+    y: 275,
     size: 14,
     font: bold,
     color: textColor
@@ -59,22 +59,11 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName, mes
 
   // CODE:
   page.drawText(code, {
-    x: 120,
-    y: 200,
+    x: 115,
+    y: 233,
     size: 14,
     font: bold,
     color: textColor
-  });
-
-  // OPTIONAL MESSAGE (under TO:)
-  page.drawText(message || "", {
-    x: 120,
-    y: 315,
-    size: 12,
-    font,
-    color: textColor,
-    maxWidth: 260,
-    lineHeight: 14
   });
 
   return await pdfDoc.save();
@@ -323,6 +312,11 @@ await sendEmail({
   html: `
     <h2>Thank you!</h2>
     <p>Your gift card is attached as a PDF.</p>
+    
+    <p><strong>To:</strong> ${md.recipient_name}</p>
+<p><strong>From:</strong> ${md.buyer_name}</p>
+<p><strong>Message:</strong> ${md.message || "—"}</p>
+
     <p>Code: <strong>${code}</strong></p>
   `,
   attachments: [
