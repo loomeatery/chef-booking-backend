@@ -892,6 +892,53 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
   }
 });
 
+// -------- Gift Cards list + status (JSON for admin) --------
+app.get("/__admin/list-giftcards", requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(200, Number(req.query.limit) || 100);
+    const r = await pool.query(
+      `SELECT id, code,
+              amount_cents,
+              original_amount_cents,
+              buyer_name, buyer_email,
+              recipient_name, recipient_email,
+              message, deliver_on,
+              status, created_at
+         FROM gift_cards
+        ORDER BY created_at DESC
+        LIMIT $1`,
+      [limit]
+    );
+    res.json(r.rows);
+  } catch (e) {
+    console.error("list-giftcards error:", e);
+    res.status(500).json({ error: "Unable to load gift cards." });
+  }
+});
+
+// Mark a gift card as redeemed
+app.post("/api/admin/giftcards/:id/redeem", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: "Invalid id" });
+
+    const r = await pool.query(
+      `UPDATE gift_cards
+          SET status = 'redeemed'
+        WHERE id = $1
+        RETURNING id, code, status`,
+      [id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: "Not found" });
+
+    res.json({ ok: true, card: r.rows[0] });
+  } catch (e) {
+    console.error("redeem-giftcard error:", e);
+    res.status(500).json({ error: "Unable to update gift card." });
+  }
+});
+
+
 // ----------------- Admin UI (robust UI with Delete booking + Pop-Up Events seats) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -1226,6 +1273,203 @@ app.get("/admin", (_req, res) => {
 </script>
 </body></html>`);
 });
+
+// ----------------- Gift Card Admin UI (separate page) -----------------
+app.get("/admin/gift-cards", (_req, res) => {
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.end(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Gift Cards – Chef Christopher LaMagna</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#111827;--mut:#6b7280;--bg:#f3f4f6;
+    --panel:#ffffff;--line:#e5e7eb;
+    --ok:#166534;--bad:#b91c1c;--pill:#e5f5eb;
+  }
+  *{box-sizing:border-box}
+  body{font-family:Inter,system-ui;background:var(--bg);color:var(--ink);margin:0}
+  header{background:#111827;color:#fff;padding:14px 18px;font-weight:800}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px}
+  .toolbar h1{font-size:18px;margin:0;margin-right:auto}
+  input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:6px 10px;font-size:13px;min-width:220px}
+  button{border-radius:10px;border:none;padding:6px 10px;font-size:13px;font-weight:600;cursor:pointer}
+  button.secondary{background:#eef2ff;color:#111827;border:1px solid var(--line)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  thead{background:#f9fafb}
+  th,td{padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut)}
+  .pill{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;border:1px solid #d1fae5;background:var(--pill);color:var(--ok)}
+  .pill.bad{background:#fee2e2;border-color:#fecaca;color:var(--bad)}
+  .small{font-size:12px;color:var(--mut)}
+  .nowrap{white-space:nowrap}
+  .btn-sm{padding:4px 8px;font-size:11px;border-radius:999px;background:#111827;color:#fff}
+  .btn-sm[disabled]{opacity:.5;cursor:default}
+  #toast{font-size:13px;margin-left:10px}
+  .ok{color:var(--ok)} .bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<header>Gift Cards • Chef Christopher LaMagna</header>
+<div class="wrap">
+  <div class="toolbar">
+    <h1>Gift Card Dashboard</h1>
+    <input id="admKey" type="password" placeholder="Admin key (x-admin-key)"/>
+    <button id="saveKey" class="secondary" type="button">Save</button>
+    <button id="clearKey" class="secondary" type="button">Clear</button>
+    <span id="toast"></span>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Buyer</th>
+          <th>Recipient</th>
+          <th>Amount</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="gc-body">
+        <tr><td colspan="7" class="small">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  const ADMIN_KEY_STORAGE = "chef_admin_key";
+  const $ = (id)=>document.getElementById(id);
+  const toast = (msg, ok)=>{
+    const el=$("toast");
+    el.textContent = msg||"";
+    el.className = ok===true?"ok":ok===false?"bad":"";
+  };
+  const usd = (c)=>{ const n=Number(c||0)/100; return n.toLocaleString("en-US",{style:"currency",currency:"USD"}); };
+  const d = (iso)=>{ if(!iso)return""; const dt=new Date(iso); return dt.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); };
+
+  function headers(){
+    const h={"Content-Type":"application/json"};
+    const k=localStorage.getItem(ADMIN_KEY_STORAGE);
+    if(k) h["x-admin-key"]=k;
+    return h;
+  }
+
+  $("admKey").value = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  $("saveKey").addEventListener("click", ()=>{
+    localStorage.setItem(ADMIN_KEY_STORAGE, $("admKey").value || "");
+    toast("Key saved ✓", true);
+    loadGiftCards();
+  });
+  $("clearKey").addEventListener("click", ()=>{
+    localStorage.removeItem(ADMIN_KEY_STORAGE);
+    $("admKey").value = "";
+    toast("Key cleared", true);
+    loadGiftCards();
+  });
+
+  async function loadGiftCards(){
+    const body = $("gc-body");
+    body.innerHTML = '<tr><td colspan="7" class="small">Loading…</td></tr>';
+    try{
+      const resp = await fetch("/__admin/list-giftcards?limit=200",{headers:headers()});
+      if(resp.status===401){
+        body.innerHTML = '<tr><td colspan="7" class="small" style="color:#b91c1c;">Unauthorized — enter your admin key and click Save.</td></tr>';
+        toast("Unauthorized — check your key", false);
+        return;
+      }
+      const data = await resp.json();
+      if(!Array.isArray(data) || data.length===0){
+        body.innerHTML = '<tr><td colspan="7" class="small">No gift cards found.</td></tr>';
+        toast("");
+        return;
+      }
+      body.innerHTML = "";
+      data.forEach(card=>{
+        const tr = document.createElement("tr");
+
+        const status = (card.status || "active").toLowerCase();
+        const pillClass = status === "active" ? "pill" : "pill bad";
+        const statusLabel = status === "active" ? "Active" : status.charAt(0).toUpperCase()+status.slice(1);
+
+        tr.innerHTML = [
+          '<td class="nowrap"><strong>'+ (card.code || "—") +'</strong></td>',
+          '<td><div>'+(card.buyer_name || "—")+'</div><div class="small">'+(card.buyer_email || "")+'</div></td>',
+          '<td><div>'+(card.recipient_name || "—")+'</div><div class="small">'+(card.recipient_email || "")+'</div></td>',
+          '<td><div>'+usd(card.original_amount_cents || card.amount_cents || 0)+'</div>'
+            + (card.original_amount_cents && card.original_amount_cents !== card.amount_cents
+               ? '<div class="small">Remaining: '+usd(card.amount_cents)+'</div>' : '') +
+            (card.deliver_on ? '<div class="small">Deliver: '+card.deliver_on+'</div>' : '') +
+          '</td>',
+          '<td><span class="'+pillClass+'">'+statusLabel+'</span></td>',
+          '<td class="small nowrap">'+d(card.created_at)+'</td>',
+          '<td></td>'
+        ].join("");
+
+        const actionTd = tr.lastChild;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn-sm";
+        btn.textContent = status === "active" ? "Mark Redeemed" : "Redeemed";
+        if(status !== "active"){
+          btn.disabled = true;
+        } else {
+          btn.addEventListener("click", ()=>redeem(card.id, btn));
+        }
+        actionTd.appendChild(btn);
+
+        body.appendChild(tr);
+      });
+      toast("");
+    }catch(e){
+      console.error(e);
+      body.innerHTML = '<tr><td colspan="7" class="small" style="color:#b91c1c;">Error loading gift cards.</td></tr>';
+      toast("Error loading gift cards", false);
+    }
+  }
+
+  async function redeem(id, btn){
+    if(!confirm("Mark this gift card as redeemed?")) return;
+    try{
+      btn.disabled = true;
+      const resp = await fetch("/api/admin/giftcards/"+id+"/redeem",{
+        method:"POST",
+        headers:headers()
+      });
+      if(resp.status===401){
+        toast("Unauthorized — check your key", false);
+        btn.disabled = false;
+        return;
+      }
+      if(!resp.ok){
+        toast("Failed to update card", false);
+        btn.disabled = false;
+        return;
+      }
+      toast("Gift card marked as redeemed ✓", true);
+      loadGiftCards();
+    }catch(e){
+      console.error(e);
+      toast("Error updating card", false);
+      btn.disabled = false;
+    }
+  }
+
+  loadGiftCards();
+})();
+</script>
+</body></html>`);
+});
+
 
 // ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
