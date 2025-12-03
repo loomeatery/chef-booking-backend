@@ -33,7 +33,7 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
   // TO:
   page.drawText(recipientName || "", {
     x: 64,
-    y: 139.5,
+    y: 128,
     size: 14,
     font: bold,
     color: textColor
