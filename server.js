@@ -251,18 +251,36 @@ if (md.type === "gift_card") {
   await sendEmail({
     to: [md.buyer_email, md.recipient_email],
     subject: `Chef Chris Gift Card`,
-    html: `
-      <h2>Your Chef Chris Gift Card</h2>
+html: `
+  <h2>Your Chef Chris Gift Card</h2>
 
-      <p><strong>To:</strong> ${md.recipient_name}</p>
-      <p><strong>From:</strong> ${md.buyer_name}</p>
-      <p><strong>Amount:</strong> $${(md.amount_cents/100).toFixed(2)}</p>
-      <p><strong>Code:</strong> ${code}</p>
+  <p><strong>To:</strong> ${md.recipient_name}</p>
+  <p><strong>From:</strong> ${md.buyer_name}</p>
+  <p><strong>Amount:</strong> $${(md.amount_cents/100).toFixed(2)}</p>
+  <p><strong>Code:</strong> ${code}</p>
 
-      ${md.message ? `<p><strong>Message:</strong> ${md.message}</p>` : ""}
+  ${md.message ? `<p><strong>Message:</strong> ${md.message}</p>` : ""}
 
-      <p>Your PDF gift card is attached. Keep the code safe — it is required for redemption.</p>
-    `,
+  <h3>How to Use Your Gift Card</h3>
+  <p>
+    This gift card can be applied toward <strong>any private dinner, pop-up,
+    cooking class, or culinary experience</strong> with Chef Chris.
+  </p>
+  <p>
+    To redeem, simply contact us with your code:
+    <br><br>
+    📧 <strong>loomeatery@gmail.com</strong><br>
+    📞 <strong>(631) 464-2862</strong><br>
+    🌐 <a href="https://www.privatechefchristopherlamagna.com" target="_blank">
+      www.privatechefchristopherlamagna.com
+    </a>
+  </p>
+
+  <p>
+    Your blank PDF gift card is attached — you may print it or save it digitally.  
+    Keep your code safe. It is required for redemption.
+  </p>
+`,
     attachments: [
       {
         filename: "Chef-Chris-Gift-Card.pdf",
