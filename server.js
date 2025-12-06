@@ -9,39 +9,14 @@ import Stripe from "stripe";
 import pkg from "pg";
 import { fileURLToPath } from "url";
 import path from "path";
+import fs from "fs";
+
+function loadGiftCardPDF() {
+  const pdfPath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
+  return fs.readFileSync(pdfPath); // returns raw bytes
+}
 
 dotenv.config();
-
-function generateGiftCardHTML({ to, from, amount, code }) {
-  return `
-  <div style="
-      width: 800px;
-      height: 450px;
-      background-image: url('https://ik.imagekit.io/gkv1ft8wh/Pink%20Minimalist%20Voucher%20Amount%20Gift%20Card%20(1).png');
-      background-size: cover;
-      background-position: center;
-      padding: 60px;
-      font-family: 'Arial', sans-serif;
-      color: #000;
-  ">
-      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
-        To: <span style="font-weight: normal">${to}</span>
-      </div>
-
-      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
-        From: <span style="font-weight: normal">${from}</span>
-      </div>
-
-      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
-        Amount: <span style="font-weight: normal">$${(amount/100).toFixed(2)}</span>
-      </div>
-
-      <div style="font-size: 22px; font-weight: bold;">
-        Code: <span style="font-weight: normal">${code}</span>
-      </div>
-  </div>
-  `;
-}
 
 const app  = express();
 const port = process.env.PORT || 3000;
@@ -246,6 +221,7 @@ if (md.type === "gift_card") {
 
   const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
 
+  // --- Save to DB ---
   await pool.query(`
     INSERT INTO gift_cards (
       code, amount_cents, original_amount_cents, with_basket,
@@ -264,27 +240,36 @@ if (md.type === "gift_card") {
     md.message || null,
     md.deliver_on || null,
     session.id,
-    'active'
+    "active"
   ]);
 
-  const cardHTML = generateGiftCardHTML({
-    to: md.recipient_name,
-    from: md.buyer_name,
-    amount: Number(md.amount_cents),
-    code
-  });
+  // --- Load the BLANK PDF template ---
+  const pdfBytes = loadGiftCardPDF();
+  const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
 
+  // --- Send email (NO HTML CARD OVERLAY, JUST INFO) ---
   await sendEmail({
     to: [md.buyer_email, md.recipient_email],
-    subject: `Your Chef Chris Gift Card — ${code}`,
+    subject: `Chef Chris Gift Card`,
     html: `
       <h2>Your Chef Chris Gift Card</h2>
-      <p>The gift card is below — save it or screenshot it.</p>
-      <br>
-      ${cardHTML}
-      <br><br>
-      <p><strong>Message:</strong> ${md.message || "—"}</p>
-    `
+
+      <p><strong>To:</strong> ${md.recipient_name}</p>
+      <p><strong>From:</strong> ${md.buyer_name}</p>
+      <p><strong>Amount:</strong> $${(md.amount_cents/100).toFixed(2)}</p>
+      <p><strong>Code:</strong> ${code}</p>
+
+      ${md.message ? `<p><strong>Message:</strong> ${md.message}</p>` : ""}
+
+      <p>Your PDF gift card is attached. Keep the code safe — it is required for redemption.</p>
+    `,
+    attachments: [
+      {
+        filename: "Chef-Chris-Gift-Card.pdf",
+        content: pdfBase64,
+        type: "application/pdf"
+      }
+    ]
   });
 
   return res.json({ received: true });
