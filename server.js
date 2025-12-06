@@ -249,7 +249,9 @@ if (md.type === "gift_card") {
 
   // --- Send email (NO HTML CARD OVERLAY, JUST INFO) ---
   await sendEmail({
-    to: [md.buyer_email, md.recipient_email],
+  to: [md.buyer_email, md.recipient_email, "loomeatery@gmail.com"]
+
+
     subject: `Chef Chris Gift Card`,
 html: `
   <h2>Your Chef Chris Gift Card</h2>
