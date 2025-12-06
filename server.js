@@ -10,62 +10,35 @@ import pkg from "pg";
 
 dotenv.config();
 
-import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
+function generateGiftCardHTML({ to, from, amount, code }) {
+  return `
+  <div style="
+      width: 800px;
+      height: 450px;
+      background-image: url('https://ik.imagekit.io/gkv1ft8wh/Pink%20Minimalist%20Voucher%20Amount%20Gift%20Card%20(1).png');
+      background-size: cover;
+      background-position: center;
+      padding: 60px;
+      font-family: 'Arial', sans-serif;
+      color: #000;
+  ">
+      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
+        To: <span style="font-weight: normal">${to}</span>
+      </div>
 
-// --- PDF generator ---
-async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
-  const templatePath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
+      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
+        From: <span style="font-weight: normal">${from}</span>
+      </div>
 
-  const pdfBytes = fs.readFileSync(templatePath);
-  const pdfDoc = await PDFDocument.load(pdfBytes);
+      <div style="font-size: 22px; font-weight: bold; margin-bottom: 10px;">
+        Amount: <span style="font-weight: normal">$${(amount/100).toFixed(2)}</span>
+      </div>
 
-  const page = pdfDoc.getPages()[0];
-  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
-  const color = rgb(0, 0, 0);
-
-  // --- FINAL WORKING COORDINATES BASED ON YOUR ACTUAL TEMPLATE ---
-
-  // TO:
-  page.drawText(recipientName || "", {
-    x: 140,
-    y: 785,
-    size: 18,
-    font: bold,
-    color
-  });
-
-  // FROM:
-  page.drawText(buyerName || "", {
-    x: 140,
-    y: 725,
-    size: 18,
-    font: bold,
-    color
-  });
-
-  // AMOUNT:
-  page.drawText(`$${(amount / 100).toFixed(2)}`, {
-    x: 140,
-    y: 665,
-    size: 18,
-    font: bold,
-    color
-  });
-
-  // CODE:
-  page.drawText(code, {
-    x: 140,
-    y: 605,
-    size: 18,
-    font: bold,
-    color
-  });
-
-  return await pdfDoc.save();
+      <div style="font-size: 22px; font-weight: bold;">
+        Code: <span style="font-weight: normal">${code}</span>
+      </div>
+  </div>
+  `;
 }
 
 const app  = express();
@@ -267,8 +240,8 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       const session = event.data.object;
       const md = session.metadata || {};
       
-      // GIFT CARD — FINAL FIXED VERSION
-      if (md.type === "gift_card") {
+if (md.type === "gift_card") {
+
   const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
 
   await pool.query(`
@@ -292,42 +265,28 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     'active'
   ]);
 
-  // 🔥 GENERATE PDF
-const pdfBytes = await generateGiftCardPDF({
-  code,
-  amount: Number(md.amount_cents),
-  buyerName: md.buyer_name,
-  recipientName: md.recipient_name
-});
+  const cardHTML = generateGiftCardHTML({
+    to: md.recipient_name,
+    from: md.buyer_name,
+    amount: Number(md.amount_cents),
+    code
+  });
 
-  // Convert PDF bytes → Base64 string
-  const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
+  await sendEmail({
+    to: [md.buyer_email, md.recipient_email],
+    subject: `Your Chef Chris Gift Card — ${code}`,
+    html: `
+      <h2>Your Chef Chris Gift Card</h2>
+      <p>The gift card is below — save it or screenshot it.</p>
+      <br>
+      ${cardHTML}
+      <br><br>
+      <p><strong>Message:</strong> ${md.message || "—"}</p>
+    `
+  });
 
-// 📧 SEND EMAIL WITH ATTACHMENT — BOTH BUYER + RECIPIENT
-await sendEmail({
-  to: [md.buyer_email, md.recipient_email],  // SEND TO BOTH!
-  subject: `Your Chef Chris Gift Card — ${code}`,
-  html: `
-    <h2>Thank you!</h2>
-    <p>Your gift card is attached as a PDF.</p>
-    
-    <p><strong>To:</strong> ${md.recipient_name}</p>
-<p><strong>From:</strong> ${md.buyer_name}</p>
-<p><strong>Message:</strong> ${md.message || "—"}</p>
-
-    <p>Code: <strong>${code}</strong></p>
-  `,
-  attachments: [
-    {
-      filename: "Chef-Chris-Gift-Card.pdf",
-      content: pdfBase64,
-      type: "application/pdf"
-    }
-  ]
-});
-
-        return res.json({received: true});
-      }
+  return res.json({ received: true });
+}
       
       const bookingId = md.booking_id ? Number(md.booking_id) : null;
       const eventDate = md.event_date; // "YYYY-MM-DD"
@@ -1791,7 +1750,8 @@ app.get("/gift-card-success", (req, res) => {
   <h1>Thank You! 🎁</h1>
   <p>Your gift card purchase is complete.</p>
   <p>You’ll receive a confirmation email shortly.</p>
-  <p>Chef Chris will prepare and send the PDF gift card to the recipient within 24 hours.</p>
+  <p>Your digital gift card has been emailed to you.</p>
+<p>The recipient will receive their gift card shortly.</p>
   <br><a href="/">← Back Home</a>
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script>confetti({particleCount:180,spread:70,origin:{y:0.6}});</script>
