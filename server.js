@@ -25,40 +25,44 @@ async function generateGiftCardPDF({ code, amount, buyerName, recipientName }) {
   const page = pdfDoc.getPages()[0];
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const color = rgb(0, 0, 0);
 
-  const textColor = rgb(0, 0, 0);
+  // --- FINAL WORKING COORDINATES BASED ON YOUR ACTUAL TEMPLATE ---
 
-  // Coordinates derived from actual template
+  // TO:
   page.drawText(recipientName || "", {
-    x: 155,
-    y: 350,
-    size: 16,
+    x: 140,
+    y: 785,
+    size: 18,
     font: bold,
-    color: textColor
+    color
   });
 
+  // FROM:
   page.drawText(buyerName || "", {
-    x: 155,
-    y: 290,
-    size: 16,
+    x: 140,
+    y: 725,
+    size: 18,
     font: bold,
-    color: textColor
+    color
   });
 
+  // AMOUNT:
   page.drawText(`$${(amount / 100).toFixed(2)}`, {
-    x: 155,
-    y: 230,
-    size: 16,
+    x: 140,
+    y: 665,
+    size: 18,
     font: bold,
-    color: textColor
+    color
   });
 
+  // CODE:
   page.drawText(code, {
-    x: 155,
-    y: 170,
-    size: 16,
+    x: 140,
+    y: 605,
+    size: 18,
     font: bold,
-    color: textColor
+    color
   });
 
   return await pdfDoc.save();
