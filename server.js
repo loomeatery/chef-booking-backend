@@ -248,20 +248,18 @@ if (md.type === "gift_card") {
   const pdfBase64 = Buffer.from(pdfBytes).toString("base64");
 
   // --- Send email (NO HTML CARD OVERLAY, JUST INFO) ---
-  await sendEmail({
-  to: [md.buyer_email, md.recipient_email, "loomeatery@gmail.com"]
+await sendEmail({
+  to: [md.buyer_email, md.recipient_email, "loomeatery@gmail.com"],
+  subject: `Chef Chris Gift Card`,
+  html: `
+    <h2>Your Chef Chris Gift Card</h2>
 
+    <p><strong>To:</strong> ${md.recipient_name}</p>
+    <p><strong>From:</strong> ${md.buyer_name}</p>
+    <p><strong>Amount:</strong> $${(md.amount_cents/100).toFixed(2)}</p>
+    <p><strong>Code:</strong> ${code}</p>
 
-    subject: `Chef Chris Gift Card`,
-html: `
-  <h2>Your Chef Chris Gift Card</h2>
-
-  <p><strong>To:</strong> ${md.recipient_name}</p>
-  <p><strong>From:</strong> ${md.buyer_name}</p>
-  <p><strong>Amount:</strong> $${(md.amount_cents/100).toFixed(2)}</p>
-  <p><strong>Code:</strong> ${code}</p>
-
-  ${md.message ? `<p><strong>Message:</strong> ${md.message}</p>` : ""}
+    ${md.message ? `<p><strong>Message:</strong> ${md.message}</p>` : ""}
 
   <h3>How to Use Your Gift Card</h3>
   <p>
