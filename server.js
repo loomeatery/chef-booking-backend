@@ -7,6 +7,8 @@ import cors from "cors";
 import dotenv from "dotenv";
 import Stripe from "stripe";
 import pkg from "pg";
+import { fileURLToPath } from "url";
+import path from "path";
 
 dotenv.config();
 
