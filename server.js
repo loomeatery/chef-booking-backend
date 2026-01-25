@@ -571,7 +571,7 @@ app.post("/api/quote", (req, res) => {
       tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
-      dinner2:  { perPerson: 250, depositPct: 0.30 }, // added for completeness
+      dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
     };
     const sel = PKG[req.body?.pkg] || PKG.tasting;
 
@@ -608,7 +608,7 @@ app.post("/api/book", async (req, res) => {
       tasting:  "Tasting Menu",
       family:   "Family-Style Dinner",
       cocktail: "Cocktail & Canapés",
-      dinner2:  "Dinner for 2 (Wed/Thu only)"
+      dinner2:  "At Home Pasta Cooking Class"
     }[packageId] || "Private Event");
 
     const guests = Number(b.guests || 0);
@@ -630,43 +630,50 @@ app.post("/api/book", async (req, res) => {
     if (packageId === "tasting") {
       const min = codeOK(accessCode) ? 4 : 6;
       if (guests < min) {
-        return res.status(400).json({ error: `Tasting Menu requires a minimum of ${min} guests${codeOK(accessCode) ? " with your access code" : ""}.` });
-      }
-    }
-    // Dinner for 2: exactly 2 guests; only Wed/Thu
-    if (packageId === "dinner2") {
-      if (guests !== 2) return res.status(400).json({ error: "Dinner for 2 requires exactly 2 guests." });
-      const d = new Date(`${date}T00:00:00`);
-      const dow = d.getDay(); // 0 Sun ... 6 Sat
-      if (!(dow === 3 || dow === 4)) {
-        return res.status(400).json({ error: "Dinner for 2 can only be booked on Wednesday or Thursday." });
+        return res.status(400).json({
+          error: `Tasting Menu requires a minimum of ${min} guests${codeOK(accessCode) ? " with your access code" : ""}.`
+        });
       }
     }
 
-    // 3) Pricing (per-person + upsells)
+    // At Home Pasta Cooking Class (keeps packageId = "dinner2" for wiring)
+    // Rules: minimum 8 guests, any day
+    if (packageId === "dinner2") {
+      if (guests < 8) {
+        return res.status(400).json({ error: "At Home Pasta Cooking Class requires a minimum of 8 guests." });
+      }
+    }
+
+    // 3) Pricing (server-side source of truth)
     const PKG = {
       tasting:  { perPerson: 215, depositPct: 0.30 },
       family:   { perPerson: 200, depositPct: 0.30 },
       cocktail: { perPerson: 125, depositPct: 0.30 },
-      dinner2:  { perPerson: 250, depositPct: 0.30 }, // ✅ ensure correct Stripe amount
+      dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
     };
-    const perPerson  = Number(b.perPerson ?? PKG[packageId]?.perPerson ?? 215);
-    const depositPct = Number(b.depositPct ?? PKG[packageId]?.depositPct ?? 0.30);
 
-    // Upsells from form (booleans)
+    const serverPkg = PKG[packageId] || PKG.tasting;
+    const perPerson  = serverPkg.perPerson;
+    const depositPct = serverPkg.depositPct;
+
+    // Upsells from form (keep yes/no for later invoicing; do NOT price them in Stripe deposit)
     const bartender  = String(b.bartender || "").toLowerCase() === "yes" || b.bartender === true;
     const tablescape = String(b.tablescape || "").toLowerCase() === "yes" || b.tablescape === true;
 
-    const bartenderFeeCents  = bartender  ? 300 * 100 : 0;          // flat $300
-    const tablescapeFeeCents = tablescape ? (15 * guests) * 100 : 0; // $15 per guest
+    const bartenderFeeCents  = 0;
+    const tablescapeFeeCents = 0;
 
     const baseSubtotalCents  = Math.round(perPerson * guests * 100);
     const subtotalCents      = baseSubtotalCents + bartenderFeeCents + tablescapeFeeCents;
     const depositCents       = Math.round(subtotalCents * depositPct);
     const balanceCents       = subtotalCents - depositCents;
+
     if (!Number.isFinite(depositCents) || depositCents < 50) {
       return res.status(400).json({ error: "Calculated deposit is too small or invalid." });
     }
+
+    // ... keep the rest of your existing /api/book logic below this point unchanged ...
+
 
     // 3.5) Create PENDING booking row (so we own the ID)
     const start = new Date(`${date}T00:00:00.000Z`);
