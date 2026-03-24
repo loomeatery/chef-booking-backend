@@ -1164,11 +1164,35 @@ app.get("/admin", (_req, res) => {
     <span id="toast"></span>
   </div>
 
-  <div class="row">
-    <div class="card">
-      <div class="head">Bookings</div>
-      <div class="list" id="bookings"></div>
+ <div class="card">
+  <div class="head">Bookings</div>
+
+  <div class="pad">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <input type="date" id="bkDate"/>
+      <input type="text" id="bkName" placeholder="Client name"/>
+      <input type="text" id="bkEmail" placeholder="Email (optional)"/>
+      <input type="text" id="bkPackage" placeholder="Package / Event"/>
+      <input type="text" id="bkGuests" placeholder="Guests" style="width:90px"/>
     </div>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <input type="text" id="bkAddress1" placeholder="Address" style="min-width:260px;flex:1"/>
+      <input type="text" id="bkCity" placeholder="City" style="width:150px"/>
+      <input type="text" id="bkState" placeholder="State" style="width:90px"/>
+      <input type="text" id="bkZip" placeholder="ZIP" style="width:110px"/>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <input type="text" id="bkPhone" placeholder="Phone" style="width:160px"/>
+      <input type="text" id="bkDietNotes" placeholder="Diet notes / notes" style="min-width:260px;flex:1"/>
+      <button id="bkAdd" type="button">Add booking</button>
+    </div>
+  </div>
+
+  <div class="list" id="bookings"></div>
+</div>
+
     <div class="card">
       <div class="head">Blackout Dates</div>
       <div class="pad">
@@ -1301,6 +1325,66 @@ app.get("/admin", (_req, res) => {
       }
     }
   }
+
+  $("bkAdd").addEventListener("click", async ()=>{
+  const date = $("bkDate").value;
+  const name = $("bkName").value;
+  const email = $("bkEmail").value;
+  const packageTitle = $("bkPackage").value;
+  const guests = $("bkGuests").value;
+  const address1 = $("bkAddress1").value;
+  const city = $("bkCity").value;
+  const state = $("bkState").value;
+  const zip = $("bkZip").value;
+  const phone = $("bkPhone").value;
+  const dietNotes = $("bkDietNotes").value;
+
+  if(!date){
+    toast("Pick a booking date", false);
+    return;
+  }
+
+  const r = await fetch(BASE + "/api/admin/bookings", {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({
+      date,
+      name,
+      email,
+      packageTitle,
+      guests,
+      address1,
+      city,
+      state,
+      zip,
+      phone,
+      dietNotes
+    })
+  });
+
+  if(r.status === 401){
+    toast("Unauthorized — check your key", false);
+    return;
+  }
+
+  if(r.ok){
+    $("bkDate").value = "";
+    $("bkName").value = "";
+    $("bkEmail").value = "";
+    $("bkPackage").value = "";
+    $("bkGuests").value = "";
+    $("bkAddress1").value = "";
+    $("bkCity").value = "";
+    $("bkState").value = "";
+    $("bkZip").value = "";
+    $("bkPhone").value = "";
+    $("bkDietNotes").value = "";
+    loadBookings();
+    toast("Booking added ✓", true);
+  } else {
+    toast("Add booking failed", false);
+  }
+});
 
   async function loadBlackouts(){
     const y=$("ySel").value, m=$("mSel").value;
