@@ -883,17 +883,62 @@ app.delete("/api/admin/blackouts/:id", requireAdmin, async (req, res) => {
 
 app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   try {
-    const { date, name, email } = req.body || {};
+    const {
+      date,
+      name,
+      email,
+      packageTitle,
+      guests,
+      address1,
+      city,
+      state,
+      zip,
+      phone,
+      dietNotes
+    } = req.body || {};
+
     if (!date) return res.status(400).json({ error: "date (YYYY-MM-DD) required" });
+
     const start = new Date(`${date}T00:00:00.000Z`);
-    const end = new Date(start); end.setUTCDate(end.getUTCDate() + 1); // ✅ day, not year
+    const end = new Date(start);
+    end.setUTCDate(end.getUTCDate() + 1);
 
     const r = await pool.query(
-      `INSERT INTO bookings (start_at,end_at,status,customer_name,customer_email)
-       VALUES ($1,$2,'confirmed',$3,$4)
-       RETURNING id,start_at,end_at,status,customer_name,customer_email`,
-      [start.toISOString(), end.toISOString(), name || "", email || ""]
+      `INSERT INTO bookings (
+        start_at,
+        end_at,
+        status,
+        customer_name,
+        customer_email,
+        package_title,
+        guests,
+        address_line1,
+        city,
+        state,
+        zip,
+        phone,
+        diet_notes
+      )
+       VALUES ($1,$2,'confirmed',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       RETURNING
+         id,start_at,end_at,status,customer_name,customer_email,
+         package_title,guests,address_line1,city,state,zip,phone,diet_notes`,
+      [
+        start.toISOString(),
+        end.toISOString(),
+        name || "",
+        email || "",
+        packageTitle || "Private Event",
+        guests ? Number(guests) : null,
+        address1 || "",
+        city || "",
+        state || "",
+        zip || "",
+        phone || "",
+        dietNotes || ""
+      ]
     );
+
     res.json(r.rows[0]);
   } catch (e) {
     console.error(e);
