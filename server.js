@@ -1105,6 +1105,46 @@ app.get("/calendar.ics", async (req, res) => {
   }
 });
 
+// ----------------- Private Blackout Calendar -----------------
+app.get("/blackouts.ics", async (req, res) => {
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        id,
+        start_at,
+        end_at,
+        reason
+      FROM blackout_dates
+      ORDER BY start_at ASC
+    `);
+
+    const cal = ical({
+      name: "Chef Chris – Blackouts",
+      timezone: "America/New_York"
+    });
+
+    for (const b of result.rows) {
+
+      cal.createEvent({
+        id: "blackout-" + b.id,
+        start: new Date(b.start_at),
+        end: new Date(b.end_at),
+        summary: "BLOCKED — " + (b.reason || "Unavailable"),
+        description: b.reason || "Unavailable"
+      });
+
+    }
+
+    res.setHeader("Content-Type", "text/calendar");
+    res.send(cal.toString());
+
+  } catch (err) {
+    console.error("Blackout calendar error:", err);
+    res.status(500).send("Unable to generate blackout calendar.");
+  }
+});
+
 // ----------------- Admin UI (robust UI with Delete booking + Pop-Up Events seats) -----------------
 app.get("/admin", (_req, res) => {
   res.setHeader("Content-Type", "text/html; charset=utf-8");
