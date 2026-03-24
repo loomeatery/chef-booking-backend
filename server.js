@@ -10,6 +10,7 @@ import pkg from "pg";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import ical from "ical-generator";
 
 function loadGiftCardPDF() {
   const pdfPath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
@@ -1001,6 +1002,63 @@ app.post("/api/admin/giftcards/:id/redeem", requireAdmin, async (req, res) => {
   }
 });
 
+// ----------------- Apple Calendar Feed -----------------
+app.get("/calendar.ics", async (req, res) => {
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        id,
+        start_at,
+        end_at,
+        customer_name,
+        package_title,
+        guests,
+        address_line1,
+        city,
+        state,
+        zip
+      FROM bookings
+      WHERE status='confirmed'
+      ORDER BY start_at ASC
+    `);
+
+    const cal = ical({
+      name: "Chef Chris Bookings",
+      timezone: "America/New_York"
+    });
+
+    for (const b of result.rows) {
+
+      const location =
+        [b.address_line1, b.city, b.state, b.zip]
+          .filter(Boolean)
+          .join(", ");
+
+      const title =
+        `${b.package_title || "Private Event"} — ${b.customer_name || "Guest"} (${b.guests || "?"} guests)`;
+
+      cal.createEvent({
+        id: String(b.id),
+        start: new Date(b.start_at),
+        end: new Date(b.end_at),
+        summary: title,
+        location: location || undefined,
+        description:
+          `Client: ${b.customer_name || ""}\n` +
+          `Guests: ${b.guests || ""}\n` +
+          `Event: ${b.package_title || ""}`
+      });
+    }
+
+    res.setHeader("Content-Type", "text/calendar");
+    res.send(cal.toString());
+
+  } catch (err) {
+    console.error("Calendar feed error:", err);
+    res.status(500).send("Unable to generate calendar.");
+  }
+});
 
 // ----------------- Admin UI (robust UI with Delete booking + Pop-Up Events seats) -----------------
 app.get("/admin", (_req, res) => {
