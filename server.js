@@ -565,6 +565,33 @@ async function verifyRecaptcha(token, ip) {
 }
 
 // ----------------- Quote -----------------
+// Holiday pricing override
+function getHolidayPerPerson(date, packageId, normalPerPerson) {
+  const majorHolidayRates = {
+    "2026-01-01": 250,
+    "2026-02-14": 250,
+    "2026-05-25": 250,
+    "2026-07-04": 250,
+    "2026-09-07": 250,
+    "2026-11-26": 250,
+    "2026-12-31": 250
+  };
+
+  const christmasRates = {
+    "2026-12-24": 300,
+    "2026-12-25": 300
+  };
+
+  if ((packageId === "tasting" || packageId === "family") && christmasRates[date]) {
+    return christmasRates[date];
+  }
+
+  if (majorHolidayRates[date]) {
+    return majorHolidayRates[date];
+  }
+
+  return normalPerPerson;
+}
 app.post("/api/quote", (req, res) => {
   try {
     const guests = Number(req.body?.guests || 0);
@@ -574,10 +601,12 @@ app.post("/api/quote", (req, res) => {
       cocktail: { perPerson: 125, depositPct: 0.30 },
       dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
     };
-    const sel = PKG[req.body?.pkg] || PKG.tasting;
+    const packageId = req.body?.pkg || req.body?.packageId || "tasting";
+const sel = PKG[packageId] || PKG.tasting;
 
-    const g        = Math.max(1, guests);
-    const subtotal = sel.perPerson * g;
+const g = Math.max(1, guests);
+const perPerson = getHolidayPerPerson(req.body?.date, packageId, sel.perPerson);
+const subtotal = perPerson * g;
     const deposit  = Math.round(subtotal * sel.depositPct);
     res.json({ subtotal, tax: 0, total: subtotal, deposit });
   } catch (err) {
@@ -653,9 +682,9 @@ app.post("/api/book", async (req, res) => {
       dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
     };
 
-    const serverPkg = PKG[packageId] || PKG.tasting;
-    const perPerson  = serverPkg.perPerson;
-    const depositPct = serverPkg.depositPct;
+   const serverPkg = PKG[packageId] || PKG.tasting;
+const perPerson = getHolidayPerPerson(date, packageId, serverPkg.perPerson);
+const depositPct = serverPkg.depositPct;
 
     // Upsells from form (keep yes/no for later invoicing; do NOT price them in Stripe deposit)
     const bartender  = String(b.bartender || "").toLowerCase() === "yes" || b.bartender === true;
