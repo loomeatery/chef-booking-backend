@@ -974,6 +974,47 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to create booking" });
   }
 });
+});
+
+app.put("/api/admin/bookings/:id/time", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { date, startTime, endTime } = req.body || {};
+
+    if (!id) return res.status(400).json({ error: "Invalid booking id" });
+    if (!date) return res.status(400).json({ error: "date required" });
+    if (!startTime) return res.status(400).json({ error: "startTime required" });
+
+    const start = new Date(`${date}T${startTime}:00`);
+
+    const end = endTime
+      ? new Date(`${date}T${endTime}:00`)
+      : new Date(start.getTime() + 4 * 60 * 60 * 1000);
+
+    if (end <= start) {
+      end.setDate(end.getDate() + 1);
+    }
+
+    const r = await pool.query(
+      `UPDATE bookings
+          SET start_at = $2,
+              end_at = $3
+        WHERE id = $1
+        RETURNING id, start_at, end_at`,
+      [id, start.toISOString(), end.toISOString()]
+    );
+
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    res.json({ ok: true, booking: r.rows[0] });
+
+  } catch (e) {
+    console.error("Failed to update booking time:", e);
+    res.status(500).json({ error: "Failed to update booking time" });
+  }
+});
 
 app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   try {
@@ -1338,7 +1379,35 @@ app.get("/admin", (_req, res) => {
   $("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
 
   $("refresh").addEventListener("click", ()=> loadAll());
+async function saveBookingTime(id, date, startTime, endTime){
 
+  if(!date || !startTime){
+    toast("Date and start time required", false);
+    return;
+  }
+
+  const r = await fetch(BASE + "/api/admin/bookings/" + id + "/time", {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({
+      date,
+      startTime,
+      endTime
+    })
+  });
+
+  if(r.status === 401){
+    toast("Unauthorized — check your key", false);
+    return;
+  }
+
+  if(r.ok){
+    toast("Time updated ✓", true);
+    loadBookings();
+  } else {
+    toast("Time update failed", false);
+  }
+}
   async function deleteBooking(id){
     if(!confirm("Delete this booking? (Use with care)")) return;
     const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
@@ -1376,10 +1445,61 @@ app.get("/admin", (_req, res) => {
           + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
           + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
           + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
-        const right=document.createElement("div"); right.className="right";
-        const delBtn=document.createElement("button"); delBtn.className="danger"; delBtn.type="button"; delBtn.textContent="Delete";
+
+        const right=document.createElement("div");
+        right.className="right";
+        right.style.display = "flex";
+        right.style.flexDirection = "column";
+        right.style.gap = "8px";
+        right.style.alignItems = "flex-end";
+
+        const timeBox = document.createElement("div");
+        timeBox.style.display = "flex";
+        timeBox.style.gap = "6px";
+        timeBox.style.alignItems = "center";
+        timeBox.style.flexWrap = "wrap";
+        timeBox.style.justifyContent = "flex-end";
+
+        const dateInput = document.createElement("input");
+        dateInput.type = "date";
+        dateInput.value = isoDateOnly(b.start_at);
+
+        const startInput = document.createElement("input");
+        startInput.type = "time";
+        startInput.value = timeValueNY(b.start_at);
+
+        const endInput = document.createElement("input");
+        endInput.type = "time";
+        endInput.value = timeValueNY(b.end_at);
+
+        const saveBtn = document.createElement("button");
+        saveBtn.type = "button";
+        saveBtn.className = "secondary";
+        saveBtn.textContent = "Save time";
+
+        saveBtn.addEventListener("click", () => {
+          saveBookingTime(
+            b.id,
+            dateInput.value,
+            startInput.value,
+            endInput.value
+          );
+        });
+
+        timeBox.append(
+          dateInput,
+          startInput,
+          endInput,
+          saveBtn
+        );
+
+        const delBtn=document.createElement("button");
+        delBtn.className="danger";
+        delBtn.type="button";
+        delBtn.textContent="Delete";
         delBtn.addEventListener("click", ()=>deleteBooking(b.id));
-        right.appendChild(delBtn);
+
+        right.append(timeBox, delBtn);
         meta.append(left,right);
         wrap.appendChild(meta);
       });
@@ -1674,6 +1794,20 @@ app.get("/admin/gift-cards", (_req, res) => {
     el.className = ok===true?"ok":ok===false?"bad":"";
   };
   const usd = (c)=>{ const n=Number(c||0)/100; return n.toLocaleString("en-US",{style:"currency",currency:"USD"}); };
+  function isoDateOnly(iso){
+  return String(iso || "").slice(0,10);
+}
+
+function timeValueNY(iso){
+  if(!iso) return "";
+
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
   const d = (iso)=>{ if(!iso)return""; const dt=new Date(iso); return dt.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); };
 
   function headers(){
