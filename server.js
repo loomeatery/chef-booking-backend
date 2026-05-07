@@ -1348,14 +1348,10 @@ function isoDateOnly(iso){
 function timeValueNY(iso){
   if(!iso) return "";
 
-  const s = String(iso);
-  const match = s.match(/T(\d{2}):(\d{2})/);
+  const parts = String(iso).split("T");
+  if(!parts[1]) return "";
 
-  if(match){
-    return match[1] + ":" + match[2];
-  }
-
-  return "";
+  return parts[1].slice(0,5);
 }
 
   function headers(){
@@ -1816,14 +1812,10 @@ app.get("/admin/gift-cards", (_req, res) => {
 function timeValueNY(iso){
   if(!iso) return "";
 
-  const s = String(iso);
-  const match = s.match(/T(\d{2}):(\d{2})/);
+  const parts = String(iso).split("T");
+  if(!parts[1]) return "";
 
-  if(match){
-    return match[1] + ":" + match[2];
-  }
-
-  return "";
+  return parts[1].slice(0,5);
 }
 
   const d = (iso)=>{ if(!iso)return""; const dt=new Date(iso); return dt.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); };
