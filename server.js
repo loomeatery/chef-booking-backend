@@ -1348,12 +1348,14 @@ function isoDateOnly(iso){
 function timeValueNY(iso){
   if(!iso) return "";
 
-  return new Date(iso).toLocaleTimeString("en-US", {
-    timeZone: "America/New_York",
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const s = String(iso);
+  const match = s.match(/T(\d{2}):(\d{2})/);
+
+  if(match){
+    return `${match[1]}:${match[2]}`;
+  }
+
+  return "";
 }
   function headers(){
     const h={"Content-Type":"application/json"};
@@ -1813,12 +1815,14 @@ app.get("/admin/gift-cards", (_req, res) => {
 function timeValueNY(iso){
   if(!iso) return "";
 
-  return new Date(iso).toLocaleTimeString("en-US", {
-    timeZone: "America/New_York",
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  const s = String(iso);
+  const match = s.match(/T(\d{2}):(\d{2})/);
+
+  if(match){
+    return `${match[1]}:${match[2]}`;
+  }
+
+  return "";
 }
   const d = (iso)=>{ if(!iso)return""; const dt=new Date(iso); return dt.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); };
 
