@@ -974,7 +974,6 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to create booking" });
   }
 });
-});
 
 app.put("/api/admin/bookings/:id/time", requireAdmin, async (req, res) => {
   try {
