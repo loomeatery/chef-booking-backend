@@ -1352,11 +1352,12 @@ function timeValueNY(iso){
   const match = s.match(/T(\d{2}):(\d{2})/);
 
   if(match){
-    return `${match[1]}:${match[2]}`;
+    return match[1] + ":" + match[2];
   }
 
   return "";
 }
+
   function headers(){
     const h={"Content-Type":"application/json"};
     const k=localStorage.getItem("chef_admin_key");
@@ -1819,11 +1820,12 @@ function timeValueNY(iso){
   const match = s.match(/T(\d{2}):(\d{2})/);
 
   if(match){
-    return `${match[1]}:${match[2]}`;
+    return match[1] + ":" + match[2];
   }
 
   return "";
 }
+
   const d = (iso)=>{ if(!iso)return""; const dt=new Date(iso); return dt.toLocaleDateString("en-US",{year:"numeric",month:"short",day:"numeric"}); };
 
   function headers(){
