@@ -1341,7 +1341,20 @@ app.get("/admin", (_req, res) => {
   function dUTC(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d)+", "+y; }
   function dMD(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d); }
   const usd = (c) => (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});
+function isoDateOnly(iso){
+  return String(iso || "").slice(0,10);
+}
 
+function timeValueNY(iso){
+  if(!iso) return "";
+
+  return new Date(iso).toLocaleTimeString("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
   function headers(){
     const h={"Content-Type":"application/json"};
     const k=localStorage.getItem("chef_admin_key");
