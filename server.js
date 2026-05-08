@@ -1497,100 +1497,123 @@ async function loadBookings(){
       const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
       wrap.appendChild(div); return;
     }
-      data.forEach(b=>{
-        const row=document.createElement("div"); row.className="rowb";
-        const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
-        const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
-        const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
-        const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
-        const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
-        const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||"—")+'</span>';
-        row.append(col1,col2,col3,col4,col5,col6);
-        wrap.appendChild(row);
 
-        const meta=document.createElement("div"); meta.className="meta";
-        const left=document.createElement("div");
-        left.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Address</div>'
-          + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
-          + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
-          + '<div class="small">'+(b.phone||"—")+'</div>'
-          + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
-          + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
-          + '<div style="font-weight:800;margin:12px 0 6px">Staff</div>'
-+ '<div style="display:flex;gap:8px;margin-top:6px">'
-+ '<input type="text" id="staff-'+b.id+'" value="'+(b.staff||'')+'" placeholder="Justin, Steve, Ian" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:10px"/>'
-+ '<button type="button" onclick="saveStaff('+b.id+')">Save Staff</button>'
-+ '</div>'
-          + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
+    data.forEach(b=>{
+      const row=document.createElement("div"); row.className="rowb";
+      const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
+      const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
+      const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
+      const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
+      const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
+      const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||"—")+'</span>';
+      row.append(col1,col2,col3,col4,col5,col6);
+      wrap.appendChild(row);
 
-        const right=document.createElement("div");
-        right.className="right";
-        right.style.display = "flex";
-        right.style.flexDirection = "column";
-        right.style.gap = "8px";
-        right.style.alignItems = "flex-end";
+      const meta=document.createElement("div"); meta.className="meta";
+      const left=document.createElement("div");
 
-        const timeBox = document.createElement("div");
-        timeBox.style.display = "flex";
-        timeBox.style.gap = "6px";
-        timeBox.style.alignItems = "center";
-        timeBox.style.flexWrap = "wrap";
-        timeBox.style.justifyContent = "flex-end";
+      left.innerHTML =
+        '<div style="font-weight:800;margin-bottom:6px">Address</div>'
+        + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
+        + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
+        + '<div class="small">'+(b.phone||"—")+'</div>'
+        + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
+        + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
+        + '<div style="font-weight:800;margin:12px 0 6px">Staff</div>'
+        + '<div id="staff-wrap-'+b.id+'" style="display:flex;gap:8px;margin-top:6px"></div>'
+        + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
 
-        const dateInput = document.createElement("input");
-        dateInput.type = "date";
-        dateInput.value = isoDateOnly(b.start_at);
+      const staffWrap = left.querySelector("#staff-wrap-" + b.id);
 
-        const startInput = document.createElement("input");
-        startInput.type = "time";
-        startInput.value = timeValueNY(b.start_at);
+      const staffInput = document.createElement("input");
+      staffInput.type = "text";
+      staffInput.id = "staff-" + b.id;
+      staffInput.value = b.staff || "";
+      staffInput.placeholder = "Justin, Steve, Ian";
+      staffInput.style.flex = "1";
+      staffInput.style.padding = "8px";
+      staffInput.style.border = "1px solid #ddd";
+      staffInput.style.borderRadius = "10px";
 
-        const endInput = document.createElement("input");
-        endInput.type = "time";
-        endInput.value = timeValueNY(b.end_at);
-
-        const saveBtn = document.createElement("button");
-        saveBtn.type = "button";
-        saveBtn.className = "secondary";
-        saveBtn.textContent = "Save time";
-
-        saveBtn.addEventListener("click", () => {
-          saveBookingTime(
-            b.id,
-            dateInput.value,
-            startInput.value,
-            endInput.value
-          );
-        });
-
-        timeBox.append(
-          dateInput,
-          startInput,
-          endInput,
-          saveBtn
-        );
-
-        const delBtn=document.createElement("button");
-        delBtn.className="danger";
-        delBtn.type="button";
-        delBtn.textContent="Delete";
-        delBtn.addEventListener("click", ()=>deleteBooking(b.id));
-
-        right.append(timeBox, delBtn);
-        meta.append(left,right);
-        wrap.appendChild(meta);
+      const staffBtn = document.createElement("button");
+      staffBtn.type = "button";
+      staffBtn.textContent = "Save Staff";
+      staffBtn.addEventListener("click", () => {
+        saveStaff(b.id);
       });
-      toast("");
-    }catch(e){
-      if(String(e.message).toLowerCase()==="unauthorized"){
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
-        wrap.appendChild(div); toast("Unauthorized — check your key", false);
-      }else{
-        const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading bookings.";
-        wrap.appendChild(div); toast("Error loading bookings", false);
-      }
+
+      staffWrap.append(staffInput, staffBtn);
+
+      const right=document.createElement("div");
+      right.className="right";
+      right.style.display = "flex";
+      right.style.flexDirection = "column";
+      right.style.gap = "8px";
+      right.style.alignItems = "flex-end";
+
+      const timeBox = document.createElement("div");
+      timeBox.style.display = "flex";
+      timeBox.style.gap = "6px";
+      timeBox.style.alignItems = "center";
+      timeBox.style.flexWrap = "wrap";
+      timeBox.style.justifyContent = "flex-end";
+
+      const dateInput = document.createElement("input");
+      dateInput.type = "date";
+      dateInput.value = isoDateOnly(b.start_at);
+
+      const startInput = document.createElement("input");
+      startInput.type = "time";
+      startInput.value = timeValueNY(b.start_at);
+
+      const endInput = document.createElement("input");
+      endInput.type = "time";
+      endInput.value = timeValueNY(b.end_at);
+
+      const saveBtn = document.createElement("button");
+      saveBtn.type = "button";
+      saveBtn.className = "secondary";
+      saveBtn.textContent = "Save time";
+
+      saveBtn.addEventListener("click", () => {
+        saveBookingTime(
+          b.id,
+          dateInput.value,
+          startInput.value,
+          endInput.value
+        );
+      });
+
+      timeBox.append(
+        dateInput,
+        startInput,
+        endInput,
+        saveBtn
+      );
+
+      const delBtn=document.createElement("button");
+      delBtn.className="danger";
+      delBtn.type="button";
+      delBtn.textContent="Delete";
+      delBtn.addEventListener("click", ()=>deleteBooking(b.id));
+
+      right.append(timeBox, delBtn);
+      meta.append(left,right);
+      wrap.appendChild(meta);
+    });
+
+    toast("");
+
+  }catch(e){
+    if(String(e.message).toLowerCase()==="unauthorized"){
+      const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Unauthorized — enter your admin key, Save, then Refresh.";
+      wrap.appendChild(div); toast("Unauthorized — check your key", false);
+    }else{
+      const div=document.createElement("div"); div.className="empty"; div.style.color="var(--bad)"; div.textContent="Error loading bookings.";
+      wrap.appendChild(div); toast("Error loading bookings", false);
     }
   }
+}
 
   $("bkAdd").addEventListener("click", async ()=>{
   const date = $("bkDate").value;
