@@ -113,6 +113,7 @@ async function initSchema() {
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS state TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS zip TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS diet_notes TEXT`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS staff TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS subtotal_cents INTEGER`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_cents INTEGER`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_cents INTEGER`,
@@ -1015,6 +1016,33 @@ app.put("/api/admin/bookings/:id/time", requireAdmin, async (req, res) => {
   }
 });
 
+app.put("/api/admin/bookings/:id/staff", requireAdmin, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { staff } = req.body || {};
+
+    if (!id) return res.status(400).json({ error: "Invalid booking id" });
+
+    const r = await pool.query(
+      `UPDATE bookings
+          SET staff = $2
+        WHERE id = $1
+        RETURNING id, staff`,
+      [id, staff || ""]
+    );
+
+    if (r.rowCount === 0) {
+      return res.status(404).json({ error: "Booking not found" });
+    }
+
+    res.json({ ok: true, booking: r.rows[0] });
+
+  } catch (e) {
+    console.error("Failed to update booking staff:", e);
+    res.status(500).json({ error: "Failed to update staff" });
+  }
+});
+
 app.delete("/api/admin/bookings/:id", requireAdmin, async (req, res) => {
   try {
     await pool.query(`DELETE FROM bookings WHERE id=$1`, [req.params.id]);
@@ -1056,7 +1084,7 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
       `SELECT id,start_at,end_at,status,customer_name,customer_email,
               package_title, guests,
               phone, address_line1, city, state, zip, diet_notes,
-              bartender, tablescape,
+              staff, bartender, tablescape,
               subtotal_cents, deposit_cents, balance_cents
          FROM bookings
         WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
@@ -1131,7 +1159,8 @@ app.get("/calendar.ics", async (req, res) => {
         address_line1,
         city,
         state,
-        zip
+        zip,
+        staff
       FROM bookings
       WHERE status='confirmed'
       ORDER BY start_at ASC
@@ -1161,7 +1190,8 @@ app.get("/calendar.ics", async (req, res) => {
         description:
           `Client: ${b.customer_name || ""}\n` +
           `Guests: ${b.guests || ""}\n` +
-          `Event: ${b.package_title || ""}`
+          `Event: ${b.package_title || ""}\n` +
+          `Staff: ${b.staff || "Not Assigned"}`
       });
     }
 
@@ -1384,12 +1414,13 @@ function timeValueNY(iso){
     mSel.value=String(now.getMonth()+1); ySel.value=String(now.getFullYear());
   })();
 
-  // Key field
-  $("admKey").value = localStorage.getItem("chef_admin_key") || "";
-  $("saveKey").addEventListener("click", ()=>{ localStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved ✓", true); });
-  $("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
+// Key field
+$("admKey").value = localStorage.getItem("chef_admin_key") || "";
+$("saveKey").addEventListener("click", ()=>{ localStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved ✓", true); });
+$("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
 
-  $("refresh").addEventListener("click", ()=> loadAll());
+$("refresh").addEventListener("click", ()=> loadAll());
+
 async function saveBookingTime(id, date, startTime, endTime){
 
   if(!date || !startTime){
@@ -1419,23 +1450,53 @@ async function saveBookingTime(id, date, startTime, endTime){
     toast("Time update failed", false);
   }
 }
-  async function deleteBooking(id){
-    if(!confirm("Delete this booking? (Use with care)")) return;
-    const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
-    if(r.status===401){ toast("Unauthorized — check your key", false); return; }
-    if(r.ok){ toast("Booking deleted ✓", true); loadBookings(); }
-    else { toast("Delete failed", false); }
+
+async function saveStaff(id){
+
+  const input = document.getElementById("staff-" + id);
+
+  if(!input){
+    toast("Staff input missing", false);
+    return;
   }
 
-  async function loadBookings(){
-    const y=$("ySel").value, m=$("mSel").value;
-    const wrap=$("bookings"); wrap.innerHTML="";
-    try{
-      const data = await getJSON("/__admin/list-bookings?year="+y+"&month="+m);
-      if(!Array.isArray(data)||data.length===0){
-        const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
-        wrap.appendChild(div); return;
-      }
+  const r = await fetch(BASE + "/api/admin/bookings/" + id + "/staff", {
+    method: "PUT",
+    headers: headers(),
+    body: JSON.stringify({
+      staff: input.value
+    })
+  });
+
+  if(r.status === 401){
+    toast("Unauthorized — check your key", false);
+    return;
+  }
+
+  if(r.ok){
+    toast("Staff updated ✓", true);
+  } else {
+    toast("Staff update failed", false);
+  }
+}
+
+async function deleteBooking(id){
+  if(!confirm("Delete this booking? (Use with care)")) return;
+  const r = await fetch(BASE + "/api/admin/bookings/" + id, { method:"DELETE", headers: headers() });
+  if(r.status===401){ toast("Unauthorized — check your key", false); return; }
+  if(r.ok){ toast("Booking deleted ✓", true); loadBookings(); }
+  else { toast("Delete failed", false); }
+}
+
+async function loadBookings(){
+  const y=$("ySel").value, m=$("mSel").value;
+  const wrap=$("bookings"); wrap.innerHTML="";
+  try{
+    const data = await getJSON("/__admin/list-bookings?year="+y+"&month="+m);
+    if(!Array.isArray(data)||data.length===0){
+      const div=document.createElement("div"); div.className="empty"; div.textContent="No bookings this month.";
+      wrap.appendChild(div); return;
+    }
       data.forEach(b=>{
         const row=document.createElement("div"); row.className="rowb";
         const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
@@ -1455,6 +1516,11 @@ async function saveBookingTime(id, date, startTime, endTime){
           + '<div class="small">'+(b.phone||"—")+'</div>'
           + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
           + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
+          + '<div style="font-weight:800;margin:12px 0 6px">Staff</div>'
++ '<div style="display:flex;gap:8px;margin-top:6px">'
++ '<input type="text" id="staff-'+b.id+'" value="'+(b.staff||'')+'" placeholder="Justin, Steve, Ian" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:10px"/>'
++ '<button type="button" onclick="saveStaff('+b.id+')">Save Staff</button>'
++ '</div>'
           + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
 
         const right=document.createElement("div");
