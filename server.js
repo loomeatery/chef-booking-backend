@@ -2089,14 +2089,15 @@ function timeValueNY(iso){
 });
 
 
-// ----------------- Success page (unchanged visuals) -----------------
+// ----------------- Success page -----------------
 app.get("/booking-success", async (req, res) => {
-  const session_id = req.query.session_id || "";
   // Only private-event Checkout sessions receive this flag. Pop-up tickets and
   // gift-card purchasers keep their existing success experience.
   const consultationButton = req.query.consultation === "1" && CONSULTATION_BOOKING_URL
-    ? `<a class="cta" href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener">Schedule your menu consultation</a>
-       <p style="margin-top:12px;font-size:13px">Google Meet is the default. Prefer a phone call? Reply to your confirmation email after scheduling.</p>`
+    ? `<div class="consultation">
+         <a class="cta" href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener">Schedule your consultation</a>
+         <p class="consultation-note">Google Meet is the default. Prefer a phone call? Reply to your confirmation email after scheduling.</p>
+       </div>`
     : "";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
@@ -2107,28 +2108,18 @@ app.get("/booking-success", async (req, res) => {
 <style>
   :root{--ink:#1f2937;--mut:#6b7280;--btn:#7B8B74;--bg:#fafaf7;}
   body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
-  .wrap{max-width:720px;margin:0 auto;padding:40px 20px;text-align:center}
-  .card{background:#fff;border:1px solid #eee;border-radius:16px;padding:28px;box-shadow:0 8px 30px rgba(0,0,0,.05)}
+  .wrap{max-width:720px;margin:0 auto;padding:88px 20px;text-align:center}
   h1{font-size:34px;margin:0 0 10px}
   p{margin:8px 0;color:var(--mut)}
-  .cta{display:inline-block;margin-top:18px;background:#7B8B74;color:#fff;padding:12px 20px;border-radius:999px;font-weight:700;text-decoration:none}
-  .row{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin-top:16px}
-  .pill{background:#f3f8f3;border:1px solid #e5efe5;border-radius:999px;padding:8px 12px;font-size:13px}
+  .consultation{margin-top:32px}
+  .cta{display:inline-block;background:#7B8B74;color:#fff;padding:14px 24px;border-radius:0;font-weight:700;text-decoration:none}
+  .consultation-note{max-width:520px;margin:14px auto 0;font-size:13px;line-height:1.55}
 </style></head>
 <body>
 <div class="wrap">
-  <div class="card">
-    <h1>Congratulations! You’re all booked 🎉</h1>
-    <p>We’ve emailed your confirmation and next steps.</p>
-    <div class="row">
-      <div class="pill">Personal call to plan your menu</div>
-      <div class="pill">Day-of kitchen prep included</div>
-      <div class="pill">We handle all the details</div>
-    </div>
-    ${consultationButton}
-    <a class="cta" href="/contact" style="background:#fff;color:#7B8B74;border:1px solid #7B8B74">Need anything? Get in touch</a>
-    <p style="margin-top:12px;font-size:13px">Booking ID (Stripe session): ${session_id}</p>
-  </div>
+  <h1>Your booking is confirmed. 🎉</h1>
+  <p>We’ve emailed your confirmation and next steps.</p>
+  ${consultationButton}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 <script>
