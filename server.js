@@ -149,6 +149,12 @@ function shortCodeFromSessionId(sessionId = '') {
   return (sessionId || '').replace(/[^a-zA-Z0-9]/g,'').slice(-8).toUpperCase();
 }
 
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>'"]/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
+  })[char]);
+}
+
 // Google Calendar appointment schedule shown after a private-event deposit.
 // Render can override this with CONSULTATION_BOOKING_URL if the schedule ever changes.
 const CONSULTATION_BOOKING_URL = (process.env.CONSULTATION_BOOKING_URL || "https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ3pyXHPkyhh4_Hyw5_0d6AeUWBF5_W2HYlaXli9S0mdZOLubUtvCAy4FQQQHdKV0EPzbQANKr1F").trim();
@@ -425,50 +431,91 @@ await sendEmail({
       const confCode   = shortCodeFromSessionId(session.id);
       const logoUrl    = process.env.EMAIL_LOGO_URL || "";
 
+      const isPrivateEvent = !md.event_id;
+      const guestFirstName = escapeHtml((fullName || "there").trim().split(/\s+/)[0] || "there");
+      const packageLabel = escapeHtml(pkgTitle);
+      const packageLabelUpper = escapeHtml(String(pkgTitle).toUpperCase());
+      const guestLabel = escapeHtml(guests ? `${Number(guests) || guests} ${Number(guests) === 1 ? "GUEST" : "GUESTS"}` : "PRIVATE DINING");
+      const eventDateLabel = /^\d{4}-\d{2}-\d{2}$/.test(String(md.event_date || ""))
+        ? new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" })
+            .format(new Date(`${md.event_date}T12:00:00Z`)).toUpperCase()
+        : "DATE TO BE CONFIRMED";
+      const [hourPart = "", minutePart = ""] = String(startTime).split(":");
+      const hour = Number(hourPart);
+      const eventTimeLabel = Number.isFinite(hour) && minutePart
+        ? `${((hour + 11) % 12) + 1}:${minutePart} ${hour >= 12 ? "PM" : "AM"}`
+        : "TIME TO BE CONFIRMED";
       const logoBlock = logoUrl
-        ? `<img src="${logoUrl}" alt="Chef Chris" width="48" height="48" style="border-radius:50%;display:block;margin-bottom:8px"/>`
+        ? `<tr><td align="center" style="padding:0 0 20px"><img src="${logoUrl}" alt="Chef Christopher LaMagna" width="58" style="display:block;border:0;max-width:58px;height:auto"/></td></tr>`
         : "";
-
-      // Pop-up ticket purchasers do not need a menu consultation.
-      const consultationBlock = !md.event_id && CONSULTATION_BOOKING_URL
-        ? `
-          <div style="margin:18px 0;padding:16px;border:1px solid #dce7d8;border-radius:12px;background:#f7faf6">
-            <div style="font-weight:800;font-size:17px;color:#203227">Choose your menu consultation</div>
-            <p style="margin:6px 0 12px">Pick the time that works best for you. Your consultation will be a Google Meet video call by default; if you prefer a phone call, simply reply to this email after booking.</p>
-            <a href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener" style="display:inline-block;background:#7B8B74;color:#fff;padding:11px 16px;border-radius:999px;text-decoration:none;font-weight:700">Schedule your consultation</a>
-          </div>
-        `
+      const receiptBlock = receiptUrl
+        ? `<tr><td align="center" style="padding:0 0 28px"><a href="${receiptUrl}" style="font-family:Arial,sans-serif;font-size:12px;color:#66705f;text-decoration:underline">View payment receipt</a></td></tr>`
         : "";
+      const consultationAction = CONSULTATION_BOOKING_URL
+        ? `<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center"><tr><td bgcolor="#687660" style="border-radius:5px"><a href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener" style="display:inline-block;padding:15px 28px;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:20px;color:#ffffff;text-decoration:none;letter-spacing:.1px">Choose Your Consultation Time</a></td></tr></table>`
+        : `<p style="margin:0;font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:28px;color:#222222">We’ll be in touch shortly to arrange your consultation.</p>`;
 
-      const html = `
+      const privateEventEmail = `
+        <!doctype html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+          @media only screen and (max-width:620px){
+            .booking-headline{font-size:34px!important;line-height:41px!important}
+            .event-detail{display:block!important;width:100%!important;box-sizing:border-box!important;border-left:0!important;border-top:1px solid #b5bbb0!important;padding:11px 0!important}
+            .event-detail:first-child{border-top:0!important}
+          }
+        </style></head>
+        <body style="margin:0;padding:0;background:#fbfbf8">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#fbfbf8"><tr><td align="center" style="padding:38px 16px">
+            <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;margin:0 auto">
+              ${logoBlock}
+              <tr><td align="center" style="padding:0 0 20px;font-family:Arial,sans-serif;font-size:11px;line-height:16px;letter-spacing:4px;color:#68705f">CHEF CHRISTOPHER LAMAGNA</td></tr>
+              <tr><td class="booking-headline" align="center" style="padding:0 0 21px;font-family:Georgia,'Times New Roman',serif;font-size:42px;line-height:49px;color:#171717">Your evening is reserved.</td></tr>
+              <tr><td align="center" style="padding:0 0 34px"><span style="display:inline-block;width:76px;border-top:1px solid #7a8672"></span></td></tr>
+              <tr><td style="padding:0 0 32px;font-family:Georgia,'Times New Roman',serif;font-size:18px;line-height:30px;color:#202020">
+                <p style="margin:0 0 17px">Hi ${guestFirstName},</p>
+                <p style="margin:0">Thank you for reserving your private dining experience. We’re looking forward to creating an evening that feels entirely your own.</p>
+              </td></tr>
+              <tr><td style="border-top:1px solid #9ba295;border-bottom:1px solid #9ba295;padding:20px 0 19px">
+                <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr>
+                  <td class="event-detail" width="34%" align="center" style="padding:0 8px;font-family:Arial,sans-serif;font-size:12px;line-height:19px;letter-spacing:1.1px;color:#202020">${eventDateLabel}</td>
+                  <td class="event-detail" width="22%" align="center" style="padding:0 8px;border-left:1px solid #b5bbb0;font-family:Arial,sans-serif;font-size:12px;line-height:19px;letter-spacing:1.1px;color:#202020">${eventTimeLabel}</td>
+                  <td class="event-detail" width="44%" align="center" style="padding:0 8px;border-left:1px solid #b5bbb0;font-family:Arial,sans-serif;font-size:12px;line-height:19px;letter-spacing:1.1px;color:#202020">${packageLabelUpper} · ${guestLabel}</td>
+                </tr></table>
+                <p style="margin:18px 0 0;text-align:center;font-family:Georgia,'Times New Roman',serif;font-size:16px;line-height:24px;font-style:italic;color:#30332e">Deposit received · ${depositText}</p>
+              </td></tr>
+              <tr><td align="center" style="padding:38px 0 10px;font-family:Arial,sans-serif;font-size:11px;line-height:16px;letter-spacing:3px;color:#68705f">THE NEXT STEP</td></tr>
+              <tr><td align="center" style="padding:0 0 17px;font-family:Georgia,'Times New Roman',serif;font-size:29px;line-height:37px;color:#191919">Shape the evening with a brief consultation.</td></tr>
+              <tr><td align="center" style="padding:0 22px 24px;font-family:Georgia,'Times New Roman',serif;font-size:17px;line-height:28px;color:#282828">Choose a convenient time for a short video consultation. We’ll use it to talk through the menu, timing, and your kitchen setup.</td></tr>
+              <tr><td align="center" style="padding:0 0 25px">${consultationAction}</td></tr>
+              <tr><td align="center" style="padding:0 0 42px;font-family:Georgia,'Times New Roman',serif;font-size:15px;line-height:24px;font-style:italic;color:#5e625c">A Google Meet link will be included.<br>Prefer a phone call? Just let us know.</td></tr>
+              <tr><td align="center" style="padding:0 0 13px;font-family:'Brush Script MT','Segoe Script',cursive;font-size:30px;line-height:36px;color:#171717">Christopher LaMagna</td></tr>
+              <tr><td align="center" style="padding:0 0 13px"><span style="display:inline-block;width:200px;border-top:1px solid #b1b5ad"></span></td></tr>
+              <tr><td align="center" style="padding:0 0 12px;font-family:Arial,sans-serif;font-size:12px;line-height:19px;color:#4f534d">Chef Christopher LaMagna <span style="padding:0 5px;color:#9fa39c">·</span> <em>Private Dining</em></td></tr>
+              <tr><td align="center" style="padding:0 0 10px;font-family:Arial,sans-serif;font-size:11px;line-height:17px;color:#8a8d87">Reservation reference: ${confCode}</td></tr>
+              ${receiptBlock}
+            </table>
+          </td></tr></table>
+        </body></html>
+      `;
+
+      const popupEmail = `
         <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
-          ${logoBlock}
           <h2 style="margin:0 0 8px">You're booked! 🎉</h2>
-          <p>Hi ${safeName},</p>
-          <p>Thanks for reserving a <strong>${pkgTitle}</strong> on <strong>${md.event_date || ""}</strong>${bookingId ? ` at <strong>${startTime}</strong>` : ""}${guests ? ` for <strong>${guests}</strong> ${md.event_id ? "seat(s)" : "guests"}` : ""}.</p>
-          <p>We’ve received your ${md.event_id ? "payment" : "deposit"}: <strong>${depositText}</strong>.</p>
-
-          <div style="margin:12px 0;padding:10px 12px;border:1px solid #eee;border-radius:10px;background:#f9faf9">
-            <div style="font-size:13px;color:#555">Confirmation code</div>
-            <div style="font-weight:800;font-size:20px;letter-spacing:1px">${confCode}</div>
-          </div>
-
+          <p>Hi ${escapeHtml(safeName)},</p>
+          <p>Thanks for reserving <strong>${packageLabel}</strong> on <strong>${escapeHtml(md.event_date || "")}</strong>${guests ? ` for <strong>${escapeHtml(guests)}</strong> seat(s)` : ""}.</p>
+          <p>We’ve received your payment: <strong>${depositText}</strong>.</p>
           ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
-
-          ${consultationBlock}
-
-          <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
-          <p>${md.event_id
-            ? "We’ll email final class details and what to bring. Questions? Reply here anytime."
-            : CONSULTATION_BOOKING_URL
-              ? "Once you choose a consultation time, we’ll plan your menu, timing, and kitchen setup together."
-              : "I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>."
-          }</p>
-
+          <p style="margin-top:12px;font-weight:600">What Happens Next</p>
+          <p>We’ll email final class details and what to bring. Questions? Reply here anytime.</p>
           <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
           <p style="color:#555;font-size:13px">Questions? Reply to this email anytime.</p>
         </div>
       `;
+
+      const html = isPrivateEvent ? privateEventEmail : popupEmail;
+      const emailSubject = isPrivateEvent
+        ? `Your evening is reserved — ${md.event_date || "Private Dining"} • ${pkgTitle}`
+        : `Booking confirmed — ${md.event_date || ""} • ${pkgTitle}`;
 
       if (guestEmail) {
         await sendEmail({
