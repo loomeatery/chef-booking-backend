@@ -149,6 +149,10 @@ function shortCodeFromSessionId(sessionId = '') {
   return (sessionId || '').replace(/[^a-zA-Z0-9]/g,'').slice(-8).toUpperCase();
 }
 
+// Google Calendar appointment schedule shown after a private-event deposit.
+// Render can override this with CONSULTATION_BOOKING_URL if the schedule ever changes.
+const CONSULTATION_BOOKING_URL = (process.env.CONSULTATION_BOOKING_URL || "https://calendar.google.com/calendar/u/0/appointments/schedules/AcZssZ3pyXHPkyhh4_Hyw5_0d6AeUWBF5_W2HYlaXli9S0mdZOLubUtvCAy4FQQQHdKV0EPzbQANKr1F").trim();
+
 // ---- Access code helpers ----
 function parseCodes() {
   const raw = (process.env.MIN_OVERRIDE_CODES || "").trim();
@@ -425,6 +429,17 @@ await sendEmail({
         ? `<img src="${logoUrl}" alt="Chef Chris" width="48" height="48" style="border-radius:50%;display:block;margin-bottom:8px"/>`
         : "";
 
+      // Pop-up ticket purchasers do not need a menu consultation.
+      const consultationBlock = !md.event_id && CONSULTATION_BOOKING_URL
+        ? `
+          <div style="margin:18px 0;padding:16px;border:1px solid #dce7d8;border-radius:12px;background:#f7faf6">
+            <div style="font-weight:800;font-size:17px;color:#203227">Choose your menu consultation</div>
+            <p style="margin:6px 0 12px">Pick the time that works best for you. Your consultation will be a Google Meet video call by default; if you prefer a phone call, simply reply to this email after booking.</p>
+            <a href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener" style="display:inline-block;background:#7B8B74;color:#fff;padding:11px 16px;border-radius:999px;text-decoration:none;font-weight:700">Schedule your consultation</a>
+          </div>
+        `
+        : "";
+
       const html = `
         <div style="font-family:ui-sans-serif,system-ui;line-height:1.6;max-width:600px;margin:0 auto">
           ${logoBlock}
@@ -440,10 +455,14 @@ await sendEmail({
 
           ${receiptUrl ? `<p><a href="${receiptUrl}" style="display:inline-block;background:#7B8B74;color:#fff;padding:10px 16px;border-radius:999px;text-decoration:none;font-weight:600">View Stripe Receipt</a></p>` : ""}
 
+          ${consultationBlock}
+
           <p style="margin-top:12px;font-weight:600">What Happens Next,</p>
           <p>${md.event_id
             ? "We’ll email final class details and what to bring. Questions? Reply here anytime."
-            : "I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>."
+            : CONSULTATION_BOOKING_URL
+              ? "Once you choose a consultation time, we’ll plan your menu, timing, and kitchen setup together."
+              : "I’ll call you to plan the menu, timing, and kitchen setup. Prefer email? Just reply to this message with <strong>“Email Me”</strong>."
           }</p>
 
           <hr style="border:none;border-top:1px solid #eee;margin:16px 0">
@@ -761,7 +780,7 @@ const depositPct = serverPkg.depositPct;
         }
       }],
 
-      success_url: `${process.env.SITE_URL}/booking-success?booking_id=${bookingId}&session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${process.env.SITE_URL}/booking-success?booking_id=${bookingId}&session_id={CHECKOUT_SESSION_ID}&consultation=1`,
       cancel_url:  `${process.env.SITE_URL}/booking-calendar#cancel`,
 
       client_reference_id: String(bookingId),
@@ -2026,6 +2045,12 @@ function timeValueNY(iso){
 // ----------------- Success page (unchanged visuals) -----------------
 app.get("/booking-success", async (req, res) => {
   const session_id = req.query.session_id || "";
+  // Only private-event Checkout sessions receive this flag. Pop-up tickets and
+  // gift-card purchasers keep their existing success experience.
+  const consultationButton = req.query.consultation === "1" && CONSULTATION_BOOKING_URL
+    ? `<a class="cta" href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener">Schedule your menu consultation</a>
+       <p style="margin-top:12px;font-size:13px">Google Meet is the default. Prefer a phone call? Reply to your confirmation email after scheduling.</p>`
+    : "";
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
 <html lang="en"><head>
@@ -2053,7 +2078,8 @@ app.get("/booking-success", async (req, res) => {
       <div class="pill">Day-of kitchen prep included</div>
       <div class="pill">We handle all the details</div>
     </div>
-    <a class="cta" href="/contact">Need anything? Get in touch</a>
+    ${consultationButton}
+    <a class="cta" href="/contact" style="background:#fff;color:#7B8B74;border:1px solid #7B8B74">Need anything? Get in touch</a>
     <p style="margin-top:12px;font-size:13px">Booking ID (Stripe session): ${session_id}</p>
   </div>
 </div>
