@@ -11,6 +11,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import ical from "ical-generator";
+import crypto from "crypto";
 
 function loadGiftCardPDF() {
   const pdfPath = path.join(process.cwd(), "pdf/giftcard-template.pdf");
@@ -21,6 +22,16 @@ dotenv.config();
 
 const app  = express();
 const port = process.env.PORT || 3000;
+
+app.disable("x-powered-by");
+app.set("trust proxy", 1);
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  res.setHeader("X-Frame-Options", "DENY");
+  next();
+});
 
 // ----------------- Stripe -----------------
 const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
@@ -127,12 +138,14 @@ async function initSchema() {
 
   console.log("✅ Database schema ready");
 }
-initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); });
+if (process.env.NODE_ENV !== "test") {
+  initSchema().catch(e => { console.error("DB init failed:", e); process.exit(1); });
+}
 
 // ----------------- Helpers -----------------
 function fmtUSD(cents){ try { return `$${(Number(cents)/100).toFixed(2)}`; } catch { return "$0.00"; } }
 
-function inAllowedZip(zip) {
+export function inAllowedZip(zip) {
   if (!/^\d{5}$/.test(String(zip))) return false;
   const z = Number(zip);
   const manhattan = (z >= 10000 && z <= 10299);
@@ -154,6 +167,38 @@ function escapeHtml(value = "") {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;"
   })[char]);
 }
+
+export function safeTokenEqual(provided, expected) {
+  const left = Buffer.from(String(provided || ""));
+  const right = Buffer.from(String(expected || ""));
+  return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
+}
+
+function calendarFeedHasDetails(req) {
+  const expected = (process.env.CALENDAR_FEED_TOKEN || "").trim();
+  const provided = (req.query.token || "").toString().trim();
+  return Boolean(expected) && safeTokenEqual(provided, expected);
+}
+
+function protectCalendarResponse(res) {
+  res.setHeader("Content-Type", "text/calendar; charset=utf-8");
+  res.setHeader("Cache-Control", "private, no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
+}
+
+export const BOOKING_PACKAGES = Object.freeze({
+  tasting:  Object.freeze({ perPerson: 215, depositPct: 0.30 }),
+  family:   Object.freeze({ perPerson: 200, depositPct: 0.30 }),
+  cocktail: Object.freeze({ perPerson: 125, depositPct: 0.30 }),
+  dinner2:  Object.freeze({ perPerson: 150, depositPct: 0.30 })
+});
+
+export const PACKAGE_TITLES = Object.freeze({
+  tasting:  "Tasting Menu",
+  family:   "Family-Style Dinner",
+  cocktail: "Cocktail & Canapés",
+  dinner2:  "At Home Pasta Cooking Class"
+});
 
 // Google Calendar appointment schedule shown after a private-event deposit.
 // Render can override this with CONSULTATION_BOOKING_URL if the schedule ever changes.
@@ -202,7 +247,7 @@ async function sendEmail({ to, subject, html, attachments = [] }) {
     if (!resp.ok) {
       console.error("Email send failed:", await resp.text());
     } else {
-      console.log(`✅ Email sent to ${payload.to.join(", ")}`);
+      console.log(`✅ Email sent (${payload.to.length} recipient${payload.to.length === 1 ? "" : "s"})`);
     }
   } catch (e) {
     console.error("sendEmail error:", e);
@@ -213,8 +258,8 @@ async function sendEmail({ to, subject, html, attachments = [] }) {
 app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async (req, res) => {
   try {
     if (!STRIPE_WEBHOOK_SECRET) {
-      console.warn("⚠️ STRIPE_WEBHOOK_SECRET not set; ignoring webhook.");
-      return res.status(200).send("ok");
+      console.error("STRIPE_WEBHOOK_SECRET is not configured; webhook cannot be verified.");
+      return res.status(503).send("Webhook unavailable");
     }
     const sig = req.headers["stripe-signature"];
     let event;
@@ -231,7 +276,7 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
       
 if (md.type === "gift_card") {
 
-  const code = `CHRIS-GIFT-${Math.random().toString(36).substring(2,10).toUpperCase()}`;
+  const code = `CHRIS-GIFT-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 
   // --- Save to DB ---
   await pool.query(`
@@ -534,15 +579,75 @@ await sendEmail({
 });
 // ----------------- Normal middleware (after webhook) -----------------
 
-app.use(cors());
+const allowedOrigins = new Set([
+  "https://privatechefchristopherlamagna.com",
+  "https://www.privatechefchristopherlamagna.com",
+  ...(process.env.ALLOWED_ORIGINS || "").split(",").map(value => value.trim()).filter(Boolean)
+]);
+
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, !origin || allowedOrigins.has(origin));
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-admin-key", "stripe-signature"]
+}));
 app.use(express.json());
+
+function createRateLimiter({ windowMs, max, message }) {
+  const buckets = new Map();
+  const cleanup = setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of buckets.entries()) {
+      if (value.resetAt <= now) buckets.delete(key);
+    }
+  }, windowMs);
+  cleanup.unref();
+
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || "unknown";
+    const current = buckets.get(key);
+    const bucket = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + windowMs }
+      : current;
+
+    bucket.count += 1;
+    buckets.set(key, bucket);
+    res.setHeader("RateLimit-Limit", String(max));
+    res.setHeader("RateLimit-Remaining", String(Math.max(0, max - bucket.count)));
+    res.setHeader("RateLimit-Reset", String(Math.ceil(bucket.resetAt / 1000)));
+
+    if (bucket.count > max) {
+      res.setHeader("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1000)));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+
+const validateCodeLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: "Too many access-code attempts. Please try again later."
+});
+const quoteLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  message: "Too many quote requests. Please try again later."
+});
+const checkoutLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 12,
+  message: "Too many checkout attempts. Please try again later."
+});
 
 // ----------------- Health -----------------
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 app.get("/api/healthz", (_req, res) => res.json({ ok: true }));
 
 // ----------------- Access code validation (for frontend badge) -----------------
-app.get("/api/validate-code", (req, res) => {
+app.get("/api/validate-code", validateCodeLimiter, (req, res) => {
   try {
     const code = (req.query.code || "").toString();
     return res.json({ ok: codeOK(code) });
@@ -608,8 +713,8 @@ async function verifyRecaptcha(token, ip) {
   try {
     const secret = process.env.RECAPTCHA_SECRET;
     if (!secret) {
-      console.warn("ℹ️ RECAPTCHA_SECRET not set; skipping verification.");
-      return true; // allow while wiring up
+      console.error("RECAPTCHA_SECRET is not configured; refusing unverified booking request.");
+      return false;
     }
     if (!token) return false;
 
@@ -633,7 +738,7 @@ async function verifyRecaptcha(token, ip) {
 
 // ----------------- Quote -----------------
 // Holiday pricing override
-function getHolidayPerPerson(date, packageId, normalPerPerson) {
+export function getHolidayPerPerson(date, packageId, normalPerPerson) {
   const majorHolidayRates = {
     "2026-01-01": 250,
     "2026-02-14": 250,
@@ -659,21 +764,18 @@ function getHolidayPerPerson(date, packageId, normalPerPerson) {
 
   return normalPerPerson;
 }
-app.post("/api/quote", (req, res) => {
+app.post("/api/quote", quoteLimiter, (req, res) => {
   try {
     const guests = Number(req.body?.guests || 0);
-    const PKG = {
-      tasting:  { perPerson: 215, depositPct: 0.30 },
-      family:   { perPerson: 200, depositPct: 0.30 },
-      cocktail: { perPerson: 125, depositPct: 0.30 },
-      dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
-    };
-    const packageId = req.body?.pkg || req.body?.packageId || "tasting";
-const sel = PKG[packageId] || PKG.tasting;
+    const packageId = String(req.body?.pkg || req.body?.packageId || "tasting");
+    const sel = BOOKING_PACKAGES[packageId];
+    if (!sel) return res.status(400).json({ error: "Unknown booking package." });
+    if (!Number.isInteger(guests) || guests < 1 || guests > 500) {
+      return res.status(400).json({ error: "Guest count is invalid." });
+    }
 
-const g = Math.max(1, guests);
-const perPerson = getHolidayPerPerson(req.body?.date, packageId, sel.perPerson);
-const subtotal = perPerson * g;
+    const perPerson = getHolidayPerPerson(req.body?.date, packageId, sel.perPerson);
+    const subtotal = perPerson * guests;
     const deposit  = Math.round(subtotal * sel.depositPct);
     res.json({ subtotal, tax: 0, total: subtotal, deposit });
   } catch (err) {
@@ -683,7 +785,7 @@ const subtotal = perPerson * g;
 });
 
 // ----------------- Book (Stripe Checkout, saves PENDING) -----------------
-app.post("/api/book", async (req, res) => {
+app.post("/api/book", checkoutLimiter, async (req, res) => {
   try {
     if (!STRIPE_SECRET) return res.status(400).json({ error: "Server misconfigured: STRIPE_SECRET is missing." });
     if (!process.env.SITE_URL) return res.status(400).json({ error: "Server misconfigured: SITE_URL is missing." });
@@ -695,23 +797,44 @@ app.post("/api/book", async (req, res) => {
 
     // 2) Normalize incoming fields
     const b = req.body || {};
-    const date  = b.date;                    // "YYYY-MM-DD"
-    const time  = b.time || "18:00";
-    const email = b.email;
+    const date  = String(b.date || "").trim();
+    const time  = String(b.time || "18:00").trim();
+    const email = String(b.email || "").trim().toLowerCase();
+    const firstName = String(b.firstName || "").trim();
+    const lastName = String(b.lastName || "").trim();
+    const phone = String(b.phone || "").trim();
+    const address1 = String(b.address1 || b.address_line1 || b.address || "").trim();
+    const city = String(b.city || "").trim();
     const accessCode = (b.accessCode || "").toString().trim();
 
-    const packageId   = b.packageId || b.pkg || "tasting";
-    const packageName = b.packageName || ({
-      tasting:  "Tasting Menu",
-      family:   "Family-Style Dinner",
-      cocktail: "Cocktail & Canapés",
-      dinner2:  "At Home Pasta Cooking Class"
-    }[packageId] || "Private Event");
+    const packageId   = String(b.packageId || b.pkg || "tasting");
+    if (!Object.prototype.hasOwnProperty.call(PACKAGE_TITLES, packageId)) {
+      return res.status(400).json({ error: "Unknown booking package." });
+    }
+    const packageName = PACKAGE_TITLES[packageId];
 
     const guests = Number(b.guests || 0);
-    if (!date || !time) return res.status(400).json({ error: "Missing date or time." });
-    if (!email) return res.status(400).json({ error: "Email is required." });
-    if (!Number.isFinite(guests) || guests < 1) return res.status(400).json({ error: "Guest count is invalid." });
+    const parsedDate = new Date(`${date}T00:00:00.000Z`);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const accepted = value => value === true || ["yes", "true", "1", "on"].includes(String(value || "").toLowerCase());
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
+      return res.status(400).json({ error: "Choose a valid event date." });
+    }
+    if (parsedDate < today) return res.status(400).json({ error: "Event date cannot be in the past." });
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return res.status(400).json({ error: "Choose a valid start time." });
+    if (!/^\S+@\S+\.\S+$/.test(email) || email.length > 254) return res.status(400).json({ error: "Enter a valid email address." });
+    if (!firstName || !lastName || !phone || !address1 || !city) {
+      return res.status(400).json({ error: "Name, phone, and complete event address are required." });
+    }
+    if ([firstName, lastName, phone, address1, city].some(value => value.length > 200) || String(b.diet || "").length > 450) {
+      return res.status(400).json({ error: "One or more booking details are too long." });
+    }
+    if (!Number.isInteger(guests) || guests < 1 || guests > 500) return res.status(400).json({ error: "Guest count is invalid." });
+    if (!accepted(b.ackKitchenLeadTime) || !accepted(b.agreedToTerms)) {
+      return res.status(400).json({ error: "Kitchen-access and terms acknowledgements are required." });
+    }
 
     // 2.5) Service area enforcement (NY only, allowed zips)
     const st = (b.state || '').toUpperCase();
@@ -742,14 +865,7 @@ app.post("/api/book", async (req, res) => {
     }
 
     // 3) Pricing (server-side source of truth)
-    const PKG = {
-      tasting:  { perPerson: 215, depositPct: 0.30 },
-      family:   { perPerson: 200, depositPct: 0.30 },
-      cocktail: { perPerson: 125, depositPct: 0.30 },
-      dinner2:  { perPerson: 150, depositPct: 0.30 }, // At Home Pasta Cooking Class
-    };
-
-   const serverPkg = PKG[packageId] || PKG.tasting;
+   const serverPkg = BOOKING_PACKAGES[packageId];
 const perPerson = getHolidayPerPerson(date, packageId, serverPkg.perPerson);
 const depositPct = serverPkg.depositPct;
 
@@ -773,8 +889,24 @@ const depositPct = serverPkg.depositPct;
 
 
     // 3.5) Create PENDING booking row (so we own the ID)
-    const start = new Date(`${date}T00:00:00.000Z`);
+    const start = parsedDate;
     const end   = new Date(start); end.setUTCDate(end.getUTCDate() + 1);
+
+    const conflict = await pool.query(
+      `SELECT 1
+         FROM bookings
+        WHERE status='confirmed'
+          AND tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
+        UNION ALL
+       SELECT 1
+         FROM blackout_dates
+        WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
+        LIMIT 1`,
+      [start.toISOString(), end.toISOString()]
+    );
+    if (conflict.rowCount > 0) {
+      return res.status(409).json({ error: "That date is no longer available. Please choose another date." });
+    }
 
     const pending = await pool.query(
       `INSERT INTO bookings
@@ -794,9 +926,9 @@ const depositPct = serverPkg.depositPct;
        RETURNING id`,
       [
         start.toISOString(), end.toISOString(),
-        `${b.firstName||''} ${b.lastName||''}`.trim(), email,
-        packageId, packageName, guests, b.phone || '',
-        b.address1 || b.address_line1 || b.address || '', b.city || '', b.state || '', b.zip || '',
+        `${firstName} ${lastName}`, email,
+        packageId, packageName, guests, phone,
+        address1, city, b.state || '', b.zip || '',
         b.diet || '',
         subtotalCents, depositCents, balanceCents,
         bartender, tablescape, bartenderFeeCents || null, tablescapeFeeCents || null
@@ -838,12 +970,12 @@ const depositPct = serverPkg.depositPct;
         package: packageId,
         package_title: packageName,
         guests: String(guests),
-        first_name: b.firstName || "",
-        last_name:  b.lastName  || "",
+        first_name: firstName,
+        last_name:  lastName,
         email:      email,
-        phone:      b.phone || "",
-        address_line1: b.address1 || b.address_line1 || b.address || "",
-        city:          b.city || "",
+        phone,
+        address_line1: address1,
+        city,
         state:         b.state || "",
         zip:           b.zip || "",
         country:       "US",
@@ -880,9 +1012,13 @@ const depositPct = serverPkg.depositPct;
 
 // ----------------- Admin protection -----------------
 function requireAdmin(req, res, next) {
-  const key = req.headers["x-admin-key"];
-  if (!process.env.ADMIN_KEY) return next(); // allow if unset (dev)
-  if (key === process.env.ADMIN_KEY) return next();
+  const expected = (process.env.ADMIN_KEY || "").trim();
+  const key = (req.headers["x-admin-key"] || "").toString().trim();
+  if (!expected) {
+    console.error("ADMIN_KEY is not configured; refusing admin request.");
+    return res.status(503).json({ error: "Admin access is not configured." });
+  }
+  if (safeTokenEqual(key, expected)) return next();
   return res.status(401).json({ error: "Unauthorized" });
 }
 
@@ -1213,6 +1349,7 @@ app.post("/api/admin/giftcards/:id/redeem", requireAdmin, async (req, res) => {
 // ----------------- Apple Calendar Feed -----------------
 app.get("/calendar.ics", async (req, res) => {
   try {
+    const includeDetails = calendarFeedHasDetails(req);
 
     const result = await pool.query(`
       SELECT
@@ -1244,24 +1381,26 @@ app.get("/calendar.ics", async (req, res) => {
           .filter(Boolean)
           .join(", ");
 
-      const title =
-        `${b.package_title || "Private Event"} — ${b.customer_name || "Guest"} (${b.guests || "?"} guests)`;
+      const title = includeDetails
+        ? `${b.package_title || "Private Event"} — ${b.customer_name || "Guest"} (${b.guests || "?"} guests)`
+        : "BUSY — Private Event";
 
       cal.createEvent({
         id: String(b.id),
         start: new Date(b.start_at),
         end: new Date(b.end_at),
         summary: title,
-        location: location || undefined,
-        description:
-          `Client: ${b.customer_name || ""}\n` +
-          `Guests: ${b.guests || ""}\n` +
-          `Event: ${b.package_title || ""}\n` +
-          `Staff: ${b.staff || "Not Assigned"}`
+        location: includeDetails && location ? location : undefined,
+        description: includeDetails
+          ? `Client: ${b.customer_name || ""}\n` +
+            `Guests: ${b.guests || ""}\n` +
+            `Event: ${b.package_title || ""}\n` +
+            `Staff: ${b.staff || "Not Assigned"}`
+          : "Reserved"
       });
     }
 
-    res.setHeader("Content-Type", "text/calendar");
+    protectCalendarResponse(res);
     res.send(cal.toString());
 
   } catch (err) {
@@ -1273,6 +1412,7 @@ app.get("/calendar.ics", async (req, res) => {
 // ----------------- Private Blackout Calendar -----------------
 app.get("/blackouts.ics", async (req, res) => {
   try {
+    const includeDetails = calendarFeedHasDetails(req);
 
     const result = await pool.query(`
       SELECT
@@ -1295,13 +1435,13 @@ app.get("/blackouts.ics", async (req, res) => {
         id: "blackout-" + b.id,
         start: new Date(b.start_at),
         end: new Date(b.end_at),
-        summary: "BLOCKED — " + (b.reason || "Unavailable"),
-        description: b.reason || "Unavailable"
+        summary: includeDetails ? "BLOCKED — " + (b.reason || "Unavailable") : "BLOCKED — Unavailable",
+        description: includeDetails ? (b.reason || "Unavailable") : "Unavailable"
       });
 
     }
 
-    res.setHeader("Content-Type", "text/calendar");
+    protectCalendarResponse(res);
     res.send(cal.toString());
 
   } catch (err) {
@@ -1312,6 +1452,8 @@ app.get("/blackouts.ics", async (req, res) => {
 
 // ----------------- Admin UI (robust UI with Delete booking + Pop-Up Events seats) -----------------
 app.get("/admin", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
 <html lang="en">
@@ -1437,6 +1579,9 @@ app.get("/admin", (_req, res) => {
   function dUTC(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d)+", "+y; }
   function dMD(iso){ if(!iso) return ""; const [y,m,d]=String(iso).slice(0,10).split("-"); const mm=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]; return mm[Number(m)-1]+" "+Number(d); }
   const usd = (c) => (Number(c||0)/100).toLocaleString("en-US",{style:"currency",currency:"USD"});
+  const esc = (value)=>String(value == null ? "" : value).replace(/[&<>'"]/g, (char)=>({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;"
+  })[char]);
 function isoDateOnly(iso){
   return String(iso || "").slice(0,10);
 }
@@ -1452,7 +1597,7 @@ function timeValueNY(iso){
 
   function headers(){
     const h={"Content-Type":"application/json"};
-    const k=localStorage.getItem("chef_admin_key");
+    const k=sessionStorage.getItem("chef_admin_key");
     if(k) h["x-admin-key"]=k;
     return h;
   }
@@ -1481,9 +1626,9 @@ function timeValueNY(iso){
   })();
 
 // Key field
-$("admKey").value = localStorage.getItem("chef_admin_key") || "";
-$("saveKey").addEventListener("click", ()=>{ localStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved ✓", true); });
-$("clearKey").addEventListener("click", ()=>{ localStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
+$("admKey").value = sessionStorage.getItem("chef_admin_key") || "";
+$("saveKey").addEventListener("click", ()=>{ sessionStorage.setItem("chef_admin_key", $("admKey").value || ""); toast("Key saved for this tab ✓", true); });
+$("clearKey").addEventListener("click", ()=>{ sessionStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
 
 $("refresh").addEventListener("click", ()=> loadAll());
 
@@ -1567,11 +1712,11 @@ async function loadBookings(){
     data.forEach(b=>{
       const row=document.createElement("div"); row.className="rowb";
       const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
-      const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+(b.customer_name||"—")+'</div><div class="small">'+(b.customer_email||"—")+'</div>';
+      const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+esc(b.customer_name||"—")+'</div><div class="small">'+esc(b.customer_email||"—")+'</div>';
       const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
       const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
       const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
-      const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+(b.status||"—")+'</span>';
+      const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+esc(b.status||"—")+'</span>';
       row.append(col1,col2,col3,col4,col5,col6);
       wrap.appendChild(row);
 
@@ -1580,11 +1725,11 @@ async function loadBookings(){
 
       left.innerHTML =
         '<div style="font-weight:800;margin-bottom:6px">Address</div>'
-        + '<div class="small">'+[b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", ")+'</div>'
+        + '<div class="small">'+esc([b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", "))+'</div>'
         + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
-        + '<div class="small">'+(b.phone||"—")+'</div>'
+        + '<div class="small">'+esc(b.phone||"—")+'</div>'
         + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
-        + '<div class="small" style="white-space:pre-wrap">'+(b.diet_notes||"—")+'</div>'
+        + '<div class="small" style="white-space:pre-wrap">'+esc(b.diet_notes||"—")+'</div>'
         + '<div style="font-weight:800;margin:12px 0 6px">Staff</div>'
         + '<div id="staff-wrap-'+b.id+'" style="display:flex;gap:8px;margin-top:6px"></div>'
         + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
@@ -1816,8 +1961,8 @@ async function loadBookings(){
         // Title + date/location
         const c1 = document.createElement("div");
         const d = (ev.dateISO||"").slice(0,10);
-        c1.innerHTML = \`<div style="font-weight:800">\${ev.title || ev.id || "Pop-Up"}</div>
-                        <div class="small">\${d || ""} • \${ev.location || "Location TBA"}</div>\`;
+        c1.innerHTML = \`<div style="font-weight:800">\${esc(ev.title || ev.id || "Pop-Up")}</div>
+                        <div class="small">\${esc(d || "")} • \${esc(ev.location || "Location TBA")}</div>\`;
 
         // Seats
         const c2 = document.createElement("div");
@@ -1960,6 +2105,9 @@ app.get("/admin/gift-cards", (_req, res) => {
     el.className = ok===true?"ok":ok===false?"bad":"";
   };
   const usd = (c)=>{ const n=Number(c||0)/100; return n.toLocaleString("en-US",{style:"currency",currency:"USD"}); };
+  const esc = (value)=>String(value == null ? "" : value).replace(/[&<>'"]/g, (char)=>({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", "'":"&#39;", '"':"&quot;"
+  })[char]);
   function isoDateOnly(iso){
   return String(iso || "").slice(0,10);
 }
@@ -1977,19 +2125,19 @@ function timeValueNY(iso){
 
   function headers(){
     const h={"Content-Type":"application/json"};
-    const k=localStorage.getItem(ADMIN_KEY_STORAGE);
+    const k=sessionStorage.getItem(ADMIN_KEY_STORAGE);
     if(k) h["x-admin-key"]=k;
     return h;
   }
 
-  $("admKey").value = localStorage.getItem(ADMIN_KEY_STORAGE) || "";
+  $("admKey").value = sessionStorage.getItem(ADMIN_KEY_STORAGE) || "";
   $("saveKey").addEventListener("click", ()=>{
-    localStorage.setItem(ADMIN_KEY_STORAGE, $("admKey").value || "");
-    toast("Key saved ✓", true);
+    sessionStorage.setItem(ADMIN_KEY_STORAGE, $("admKey").value || "");
+    toast("Key saved for this tab ✓", true);
     loadGiftCards();
   });
   $("clearKey").addEventListener("click", ()=>{
-    localStorage.removeItem(ADMIN_KEY_STORAGE);
+    sessionStorage.removeItem(ADMIN_KEY_STORAGE);
     $("admKey").value = "";
     toast("Key cleared", true);
     loadGiftCards();
@@ -2020,15 +2168,15 @@ function timeValueNY(iso){
         const statusLabel = status === "active" ? "Active" : status.charAt(0).toUpperCase()+status.slice(1);
 
         tr.innerHTML = [
-          '<td class="nowrap"><strong>'+ (card.code || "—") +'</strong></td>',
-          '<td><div>'+(card.buyer_name || "—")+'</div><div class="small">'+(card.buyer_email || "")+'</div></td>',
-          '<td><div>'+(card.recipient_name || "—")+'</div><div class="small">'+(card.recipient_email || "")+'</div></td>',
+          '<td class="nowrap"><strong>'+esc(card.code || "—")+'</strong></td>',
+          '<td><div>'+esc(card.buyer_name || "—")+'</div><div class="small">'+esc(card.buyer_email || "")+'</div></td>',
+          '<td><div>'+esc(card.recipient_name || "—")+'</div><div class="small">'+esc(card.recipient_email || "")+'</div></td>',
           '<td><div>'+usd(card.original_amount_cents || card.amount_cents || 0)+'</div>'
             + (card.original_amount_cents && card.original_amount_cents !== card.amount_cents
                ? '<div class="small">Remaining: '+usd(card.amount_cents)+'</div>' : '') +
-            (card.deliver_on ? '<div class="small">Deliver: '+card.deliver_on+'</div>' : '') +
+            (card.deliver_on ? '<div class="small">Deliver: '+esc(card.deliver_on)+'</div>' : '') +
           '</td>',
-          '<td><span class="'+pillClass+'">'+statusLabel+'</span></td>',
+          '<td><span class="'+pillClass+'">'+esc(statusLabel)+'</span></td>',
           '<td class="small nowrap">'+d(card.created_at)+'</td>',
           '<td></td>'
         ].join("");
@@ -2099,6 +2247,8 @@ app.get("/booking-success", async (req, res) => {
          <p class="consultation-note">Google Meet is the default. Prefer a phone call? Reply to your confirmation email after scheduling.</p>
        </div>`
     : "";
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.end(`<!doctype html>
 <html lang="en"><head>
@@ -2161,7 +2311,7 @@ app.get("/api/events", async (_req, res) => {
 });
 
 // --------- API: Create Stripe Checkout for a specific event
-app.post("/api/events/:id/book", async (req, res) => {
+app.post("/api/events/:id/book", checkoutLimiter, async (req, res) => {
   try {
     const { id } = req.params;
     const events = loadEvents();
@@ -2274,7 +2424,7 @@ app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
 
 // ----------------- Start server -----------------
 // GIFT CARD CHECKOUT
-app.post("/api/giftcards/create-checkout", express.json(), async (req, res) => {
+app.post("/api/giftcards/create-checkout", checkoutLimiter, express.json(), async (req, res) => {
   try {
     const { amount, basket = false, buyer_name, buyer_email, recipient_name, recipient_email, message = "", deliver_on } = req.body;
     if (amount < 1 || !buyer_name || !buyer_email || !recipient_name || !recipient_email) return res.status(400).json({error: "Invalid"});
@@ -2309,6 +2459,8 @@ app.post("/api/giftcards/create-checkout", express.json(), async (req, res) => {
 
 // GIFT CARD SUCCESS PAGE
 app.get("/gift-card-success", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.send(`<!doctype html><html><head><title>Gift Card - Thank You!</title>
   <style>body{font-family:system-ui;background:#000;color:#fff;text-align:center;padding:80px;line-height:1.6}
   h1{font-size:42px;margin:0 0 16px}a{color:#bfa87c;text-decoration:none;font-weight:600}</style></head><body>
@@ -2323,6 +2475,10 @@ app.get("/gift-card-success", (req, res) => {
   </body></html>`);
 });
 
-app.listen(port, () => {
-  console.log(`Chef booking server listening on ${port}`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(port, () => {
+    console.log(`Chef booking server listening on ${port}`);
+  });
+}
+
+export { app };
