@@ -24,6 +24,9 @@ Never commit `.env` or copy production credentials into this repository.
 - `ADMIN_KEY`
 - `CALENDAR_FEED_TOKEN`
 
+Existing deployments may continue using the legacy `ADMIN_TOKEN` name; a
+dedicated `CALENDAR_FEED_TOKEN` takes precedence when both are configured.
+
 Email identity, allowed origins, consultation scheduling, and minimum-override
 codes are documented in `.env.example`.
 
@@ -49,3 +52,40 @@ subscription URL.
 - Confirm customer and internal confirmation emails arrive and render correctly.
 - Confirm the public calendar feeds are redacted and tokenized feeds show details.
 - Test booking, cancellation-return, gift-card, admin, and error paths.
+
+## Remaining-balance payment links
+
+The first balance-link request automatically creates one Stripe product named
+**PRIVATE EVENT — REMAINING BALANCE** with no default price. Later requests
+reuse that product. No manual Stripe product or extra Render variable is
+required. Every generated balance amount becomes a separate one-time price
+under this single product. Stripe keeps the links in the Payment Links area and
+associates each link with its corresponding price. Existing service and deposit
+products remain unchanged.
+
+The protected `/admin` page includes a **Create Remaining Balance Link** tool.
+Enter the event date, client name and email, event/package name, and copy the
+exact **TOTAL DUE** from the Google invoice. The amount is intentionally never
+filled from the booking record: Google invoices can include sales tax, add-ons,
+travel, or other adjustments that are not in the original package balance.
+The booking ID and invoice number are optional. For bookings already listed in
+the dashboard, use **Create balance link** on the booking row to prefill the
+client and event fields; the payment amount remains blank for safety.
+
+The backend creates a Stripe Payment Link with `payment_type=balance` metadata
+and limits it to one completed payment. After payment:
+
+- Stripe sends the existing `checkout.session.completed` webhook;
+- Resend sends a distinct paid-in-full email and the Stripe receipt link;
+- the existing booking row records the balance amount, payment time, and Stripe
+  session when a booking ID was included;
+- the customer sees a paid-in-full success page without deposit or consultation
+  instructions.
+
+Copy the generated URL into the existing Google invoice behind **PAY ONLINE —
+CLICK HERE**, then send the invoice normally. This uses a Stripe Payment Link;
+it does not create a Stripe Invoice.
+
+Website booking deposits continue to use `booking_id` metadata and their
+existing reservation email. Unrecognized Checkout payments receive a neutral
+payment receipt instead of being mislabeled as deposits.

@@ -36,6 +36,7 @@ app.use((_req, res, next) => {
 // ----------------- Stripe -----------------
 const STRIPE_SECRET = process.env.STRIPE_SECRET || "";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+export const STRIPE_BALANCE_PRODUCT_ID = "private_event_remaining_balance";
 if (!STRIPE_SECRET) console.warn("⚠️ STRIPE_SECRET is not set.");
 if (!process.env.SITE_URL) console.warn("⚠️ SITE_URL is not set.");
 const stripe = new Stripe(STRIPE_SECRET);
@@ -128,6 +129,9 @@ async function initSchema() {
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS subtotal_cents INTEGER`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS deposit_cents INTEGER`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_paid_cents INTEGER`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_paid_at TIMESTAMPTZ`,
+    `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS balance_stripe_session_id TEXT`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS bartender BOOLEAN DEFAULT false`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS tablescape BOOLEAN DEFAULT false`,
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS bartender_fee_cents INTEGER`,
@@ -135,6 +139,11 @@ async function initSchema() {
     `ALTER TABLE bookings ADD COLUMN IF NOT EXISTS client_reference_id TEXT`
   ];
   for (const sql of alters) await pool.query(sql);
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS bookings_balance_session_unique
+      ON bookings (balance_stripe_session_id)
+      WHERE balance_stripe_session_id IS NOT NULL;
+  `);
 
   console.log("✅ Database schema ready");
 }
@@ -175,7 +184,9 @@ export function safeTokenEqual(provided, expected) {
 }
 
 function calendarFeedHasDetails(req) {
-  const expected = (process.env.CALENDAR_FEED_TOKEN || "").trim();
+  // ADMIN_TOKEN is retained as a legacy fallback so existing Render services
+  // can adopt the private feed without renaming or exposing their stored token.
+  const expected = (process.env.CALENDAR_FEED_TOKEN || process.env.ADMIN_TOKEN || "").trim();
   const provided = (req.query.token || "").toString().trim();
   return Boolean(expected) && safeTokenEqual(provided, expected);
 }
@@ -199,6 +210,204 @@ export const PACKAGE_TITLES = Object.freeze({
   cocktail: "Cocktail & Canapés",
   dinner2:  "At Home Pasta Cooking Class"
 });
+
+export function classifyCheckoutPayment(metadata = {}) {
+  if (metadata.type === "gift_card") return "gift_card";
+  if (metadata.event_id) return "popup";
+  if (metadata.payment_type === "balance") return "balance";
+  if (metadata.booking_id) return "deposit";
+  return "unclassified";
+}
+
+export function parseDollarAmount(value) {
+  const normalized = String(value ?? "").trim();
+  if (!/^\d{1,6}(?:\.\d{1,2})?$/.test(normalized)) return null;
+  const cents = Math.round(Number(normalized) * 100);
+  return Number.isSafeInteger(cents) && cents >= 50 && cents <= 100_000_00 ? cents : null;
+}
+
+function isValidISODate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))) return false;
+  const date = new Date(`${value}T12:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function formatEmailDate(value) {
+  if (!isValidISODate(value)) return "your upcoming event";
+  const date = new Date(`${value}T12:00:00Z`);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC"
+  }).format(date);
+}
+
+export function buildBalancePaymentLink({
+  priceId,
+  amountCents,
+  bookingId = "",
+  clientName,
+  clientEmail,
+  eventDate,
+  packageTitle = "Private Event",
+  invoiceNumber = "",
+  successBaseUrl
+}) {
+  const metadata = {
+    payment_type: "balance",
+    booking_id: bookingId ? String(bookingId) : "",
+    client_name: String(clientName || "").slice(0, 120),
+    email: String(clientEmail || "").slice(0, 200),
+    event_date: String(eventDate || "").slice(0, 10),
+    package_title: String(packageTitle || "Private Event").slice(0, 120),
+    invoice_number: String(invoiceNumber || "").slice(0, 80),
+    amount_cents: String(amountCents)
+  };
+
+  return {
+    line_items: [{ price: priceId, quantity: 1 }],
+    payment_method_types: ["card"],
+    billing_address_collection: "required",
+    after_completion: {
+      type: "redirect",
+      redirect: {
+        url: `${successBaseUrl}/booking-success?balance=1&session_id={CHECKOUT_SESSION_ID}`
+      }
+    },
+    restrictions: { completed_sessions: { limit: 1 } },
+    inactive_message: "This balance has already been paid. If you have questions, please contact Chef Christopher LaMagna.",
+    metadata,
+    payment_intent_data: { metadata },
+    custom_text: {
+      submit: { message: "This payment completes the remaining balance for your private event." }
+    }
+  };
+}
+
+export function buildBalancePrice({
+  productId,
+  amountCents,
+  packageTitle = "Private Event",
+  invoiceNumber = "",
+  clientName = "",
+  eventDate = ""
+}) {
+  const invoiceLabel = String(invoiceNumber || "").trim();
+  const priceLabel = [eventDate, clientName, packageTitle]
+    .map(value => String(value || "").trim())
+    .filter(Boolean)
+    .join(" — ")
+    .slice(0, 250);
+  return {
+    currency: "usd",
+    unit_amount: amountCents,
+    product: productId,
+    nickname: priceLabel || "Private Event Remaining Balance",
+    metadata: {
+      payment_type: "balance",
+      event_date: String(eventDate || "").slice(0, 10),
+      package_title: String(packageTitle || "Private Event").slice(0, 120),
+      invoice_number: invoiceLabel.slice(0, 80)
+    }
+  };
+}
+
+export function buildBalanceProduct() {
+  return {
+    id: STRIPE_BALANCE_PRODUCT_ID,
+    name: "PRIVATE EVENT — REMAINING BALANCE",
+    description: "Final balance payments for private events invoiced outside Stripe.",
+    shippable: false,
+    metadata: { payment_type: "balance" }
+  };
+}
+
+async function ensureBalanceProduct() {
+  try {
+    const product = await stripe.products.retrieve(STRIPE_BALANCE_PRODUCT_ID);
+    if (product.active === false) {
+      await stripe.products.update(STRIPE_BALANCE_PRODUCT_ID, { active: true });
+    }
+    return STRIPE_BALANCE_PRODUCT_ID;
+  } catch (error) {
+    if (error?.code !== "resource_missing") throw error;
+    try {
+      const product = await stripe.products.create(buildBalanceProduct());
+      return product.id;
+    } catch (createError) {
+      // A simultaneous first request can create the deterministic product ID
+      // between the retrieve and create calls. In that case, safely reuse it.
+      if (createError?.code === "resource_already_exists" || /already exists/i.test(createError?.message || "")) {
+        return STRIPE_BALANCE_PRODUCT_ID;
+      }
+      throw createError;
+    }
+  }
+}
+
+export function buildBalancePaidEmail({
+  clientName,
+  amountText,
+  eventDate,
+  packageTitle,
+  invoiceNumber = "",
+  receiptUrl = ""
+}) {
+  const firstName = escapeHtml((clientName || "there").trim().split(/\s+/)[0] || "there");
+  const safeAmount = escapeHtml(amountText || "Payment received");
+  const safeDate = escapeHtml(formatEmailDate(eventDate));
+  const safePackage = escapeHtml(packageTitle || "Private Event");
+  const safeInvoice = escapeHtml(invoiceNumber);
+  const invoiceRow = safeInvoice
+    ? `<tr><td style="padding:5px 0;color:#666">Invoice</td><td align="right" style="padding:5px 0;font-weight:600">${safeInvoice}</td></tr>`
+    : "";
+  const receiptBlock = receiptUrl
+    ? `<p style="margin:26px 0 0;text-align:center"><a href="${escapeHtml(receiptUrl)}" style="color:#687660;text-decoration:underline">View your Stripe receipt</a></p>`
+    : "";
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#fbfbf8;color:#202020">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#fbfbf8"><tr><td align="center" style="padding:38px 16px">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:600px;margin:0 auto">
+      <tr><td align="center" style="padding:0 0 20px;font-family:Arial,sans-serif;font-size:11px;letter-spacing:4px;color:#68705f">CHEF CHRISTOPHER LAMAGNA</td></tr>
+      <tr><td align="center" style="padding:0 0 21px;font-family:Georgia,'Times New Roman',serif;font-size:40px;line-height:48px;color:#171717">Your balance is paid in full.</td></tr>
+      <tr><td align="center" style="padding:0 0 34px"><span style="display:inline-block;width:76px;border-top:1px solid #7a8672"></span></td></tr>
+      <tr><td style="padding:0 0 28px;font-family:Georgia,'Times New Roman',serif;font-size:18px;line-height:30px">
+        <p style="margin:0 0 17px">Hi ${firstName},</p>
+        <p style="margin:0">Thank you—your remaining balance has been received. Your private dining experience is fully paid, and there is nothing further due at this time.</p>
+      </td></tr>
+      <tr><td style="border-top:1px solid #9ba295;border-bottom:1px solid #9ba295;padding:18px 0;font-family:Arial,sans-serif;font-size:13px;line-height:20px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr><td style="padding:5px 0;color:#666">Event</td><td align="right" style="padding:5px 0;font-weight:600">${safeDate}</td></tr>
+          <tr><td style="padding:5px 0;color:#666">Experience</td><td align="right" style="padding:5px 0;font-weight:600">${safePackage}</td></tr>
+          <tr><td style="padding:5px 0;color:#666">Payment received</td><td align="right" style="padding:5px 0;font-weight:600">${safeAmount}</td></tr>
+          ${invoiceRow}
+        </table>
+      </td></tr>
+      <tr><td align="center" style="padding:34px 0 0;font-family:Georgia,'Times New Roman',serif;font-size:18px;line-height:29px">We look forward to cooking for you.</td></tr>
+      ${receiptBlock ? `<tr><td>${receiptBlock}</td></tr>` : ""}
+      <tr><td align="center" style="padding:34px 0 12px;font-family:'Brush Script MT','Segoe Script',cursive;font-size:30px;color:#171717">Christopher LaMagna</td></tr>
+      <tr><td align="center" style="font-family:Arial,sans-serif;font-size:12px;color:#4f534d">Chef Christopher LaMagna · Private Dining</td></tr>
+    </table>
+  </td></tr></table>
+</body></html>`;
+}
+
+export function buildGenericPaymentEmail({ clientName, amountText, receiptUrl = "" }) {
+  const firstName = escapeHtml((clientName || "there").trim().split(/\s+/)[0] || "there");
+  const receipt = receiptUrl
+    ? `<p><a href="${escapeHtml(receiptUrl)}">View your Stripe receipt</a></p>`
+    : "";
+  return `<div style="font-family:Arial,sans-serif;line-height:1.6;max-width:600px;margin:0 auto">
+    <h2>Payment received</h2>
+    <p>Hi ${firstName},</p>
+    <p>Thank you. We received your payment of <strong>${escapeHtml(amountText || "the submitted amount")}</strong>.</p>
+    ${receipt}
+    <p>If you have any questions, reply to this email anytime.</p>
+  </div>`;
+}
 
 // Google Calendar appointment schedule shown after a private-event deposit.
 // Render can override this with CONSULTATION_BOOKING_URL if the schedule ever changes.
@@ -273,8 +482,9 @@ app.post("/api/stripe/webhook", express.raw({ type: "application/json" }), async
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       const md = session.metadata || {};
+      const paymentKind = classifyCheckoutPayment(md);
       
-if (md.type === "gift_card") {
+if (paymentKind === "gift_card") {
 
   const code = `CHRIS-GIFT-${crypto.randomBytes(6).toString("hex").toUpperCase()}`;
 
@@ -374,15 +584,77 @@ await sendEmail({
       // Try to fetch receipt URL + paid amount
       let receiptUrl = "";
       let depositText = "Deposit received";
+      let paidAmountCents = Number(session.amount_total || md.amount_cents || 0);
       try {
         if (session.payment_intent) {
           const PI = await stripe.paymentIntents.retrieve(session.payment_intent);
           const ch = PI.charges?.data?.[0];
           if (ch?.receipt_url) receiptUrl = ch.receipt_url;
-          if (PI.amount_received) depositText = fmtUSD(PI.amount_received);
+          if (PI.amount_received) {
+            paidAmountCents = Number(PI.amount_received);
+            depositText = fmtUSD(PI.amount_received);
+          }
         }
       } catch (e) {
         console.warn("Could not fetch receipt URL", e.message);
+      }
+
+      if (paymentKind === "balance") {
+        const balanceBookingId = md.booking_id ? Number(md.booking_id) : null;
+        const balanceEmail = cd.email || md.email || "";
+        const balanceName = fullName || md.client_name || "Guest";
+        const balancePackage = md.package_title || "Private Event";
+        const balanceAmountText = paidAmountCents > 0 ? fmtUSD(paidAmountCents) : "Payment received";
+
+        if (balanceBookingId) {
+          const updated = await pool.query(
+            `UPDATE bookings
+                SET balance_paid_cents = $2,
+                    balance_paid_at = NOW(),
+                    balance_stripe_session_id = $3
+              WHERE id = $1
+              RETURNING id`,
+            [balanceBookingId, paidAmountCents || null, session.id]
+          );
+          if (updated.rowCount === 0) {
+            console.warn(`Balance payment received for unknown booking #${balanceBookingId}`);
+          }
+        }
+
+        if (balanceEmail) {
+          await sendEmail({
+            to: [balanceEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
+            subject: `Final balance received — ${formatEmailDate(md.event_date)}`,
+            html: buildBalancePaidEmail({
+              clientName: balanceName,
+              amountText: balanceAmountText,
+              eventDate: md.event_date,
+              packageTitle: balancePackage,
+              invoiceNumber: md.invoice_number,
+              receiptUrl
+            })
+          });
+        }
+
+        console.log(`✅ Balance payment processed [session ${session.id}]`);
+        return res.json({ received: true });
+      }
+
+      if (paymentKind === "unclassified") {
+        const paymentEmail = cd.email || md.email || "";
+        if (paymentEmail) {
+          await sendEmail({
+            to: [paymentEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
+            subject: "Payment received — Chef Christopher LaMagna",
+            html: buildGenericPaymentEmail({
+              clientName: fullName || "Guest",
+              amountText: paidAmountCents > 0 ? fmtUSD(paidAmountCents) : "Payment received",
+              receiptUrl
+            })
+          });
+        }
+        console.warn(`Unclassified Stripe payment received; generic email used [session ${session.id}]`);
+        return res.json({ received: true });
       }
 
       if (bookingId) {
@@ -565,7 +837,7 @@ await sendEmail({
       if (guestEmail) {
         await sendEmail({
           to: [guestEmail, process.env.ADMIN_EMAIL || "loomeatery@gmail.com"],
-          subject: `Booking confirmed — ${md.event_date || ""} • ${pkgTitle}`,
+          subject: emailSubject,
           html
         });
       }
@@ -1023,6 +1295,86 @@ function requireAdmin(req, res, next) {
 }
 
 // ----------------- Admin APIs -----------------
+app.post("/api/admin/balance-links", requireAdmin, checkoutLimiter, async (req, res) => {
+  try {
+    if (!STRIPE_SECRET) return res.status(503).json({ error: "Stripe is not configured." });
+    if (!process.env.SITE_URL) return res.status(503).json({ error: "SITE_URL is not configured." });
+
+    const body = req.body || {};
+    const rawBookingId = String(body.bookingId || "").trim();
+    const bookingId = rawBookingId ? Number(rawBookingId) : null;
+    if (rawBookingId && (!Number.isInteger(bookingId) || bookingId < 1)) {
+      return res.status(400).json({ error: "Booking ID must be a positive number." });
+    }
+
+    let booking = null;
+    if (bookingId) {
+      const result = await pool.query(
+        `SELECT id,start_at,customer_name,customer_email,package_title
+           FROM bookings
+          WHERE id=$1`,
+        [bookingId]
+      );
+      if (result.rowCount === 0) return res.status(404).json({ error: "Booking not found." });
+      booking = result.rows[0];
+    }
+
+    // The Google invoice is the source of truth because its TOTAL DUE can
+    // include sales tax, add-ons, travel, and other adjustments that are not
+    // represented by the booking's original pre-tax package balance.
+    const amountCents = parseDollarAmount(body.amount);
+    const clientName = String(body.clientName || booking?.customer_name || "").trim();
+    const clientEmail = String(body.clientEmail || booking?.customer_email || "").trim().toLowerCase();
+    const eventDate = String(body.eventDate || booking?.start_at?.toISOString?.().slice(0, 10) || "").trim();
+    const packageTitle = String(body.packageTitle || booking?.package_title || "Private Event").trim();
+    const invoiceNumber = String(body.invoiceNumber || "").trim();
+
+    if (!amountCents) return res.status(400).json({ error: "Enter a balance between $0.50 and $100,000.00." });
+    if (!clientName || clientName.length > 120) return res.status(400).json({ error: "Enter the client's name." });
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clientEmail) || clientEmail.length > 200) {
+      return res.status(400).json({ error: "Enter a valid client email." });
+    }
+    if (!isValidISODate(eventDate)) {
+      return res.status(400).json({ error: "Enter a valid event date." });
+    }
+    if (!packageTitle || packageTitle.length > 120) return res.status(400).json({ error: "Enter the event or package name." });
+    if (invoiceNumber.length > 80) return res.status(400).json({ error: "Invoice number is too long." });
+
+    const balanceProductId = await ensureBalanceProduct();
+    const price = await stripe.prices.create(buildBalancePrice({
+      productId: balanceProductId,
+      amountCents,
+      packageTitle,
+      invoiceNumber,
+      clientName,
+      eventDate
+    }));
+    const siteUrl = process.env.SITE_URL.replace(/\/$/, "");
+    const link = await stripe.paymentLinks.create(buildBalancePaymentLink({
+      priceId: price.id,
+      amountCents,
+      bookingId,
+      clientName,
+      clientEmail,
+      eventDate,
+      packageTitle,
+      invoiceNumber,
+      successBaseUrl: siteUrl
+    }));
+    res.json({
+      ok: true,
+      url: link.url,
+      paymentLinkId: link.id,
+      amountCents,
+      bookingId
+    });
+  } catch (error) {
+    const message = error?.raw?.message || error?.message || "Unable to create balance link.";
+    console.error("Balance link error:", message);
+    res.status(400).json({ error: message });
+  }
+});
+
 app.post("/api/admin/blackouts/bulk", requireAdmin, async (req, res) => {
   try {
     const dates = Array.isArray(req.body?.dates) ? req.body.dates : [];
@@ -1287,7 +1639,8 @@ app.get("/__admin/list-bookings", requireAdmin, async (req, res) => {
               package_title, guests,
               phone, address_line1, city, state, zip, diet_notes,
               staff, bartender, tablescape,
-              subtotal_cents, deposit_cents, balance_cents
+              subtotal_cents, deposit_cents, balance_cents,
+              balance_paid_cents, balance_paid_at, balance_stripe_session_id
          FROM bookings
         WHERE tstzrange(start_at,end_at,'[)') && tstzrange($1,$2,'[)')
         ORDER BY start_at ASC`,
@@ -1473,8 +1826,9 @@ app.get("/admin", (_req, res) => {
   .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
   .pad{padding:12px 14px}
   .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  select,input[type="text"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+  select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
   button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.55;cursor:not-allowed}
   button.secondary{background:#eef3ef;color:#223;border:1px solid var(--line)}
   button.danger{background:#c62828}
   .list{display:flex;flex-direction:column}
@@ -1509,6 +1863,33 @@ app.get("/admin", (_req, res) => {
     <button id="saveKey" type="button" class="secondary">Save</button>
     <button id="clearKey" type="button" class="secondary">Clear</button>
     <span id="toast"></span>
+  </div>
+
+  <div class="card" id="balanceCard" style="margin-bottom:16px">
+    <div class="head">Create Remaining Balance Link</div>
+    <div class="pad">
+      <div class="small" style="margin-bottom:10px">Copy the exact <strong>TOTAL DUE</strong> from your Google invoice. This creates a one-use Stripe link that turns off after payment and sends the paid-in-full email automatically.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <input type="date" id="bpDate" aria-label="Event date"/>
+        <input type="text" id="bpName" placeholder="Client name"/>
+        <input type="email" id="bpEmail" placeholder="Client email" style="min-width:230px"/>
+        <input type="text" id="bpPackage" placeholder="Package / Event"/>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="number" id="bpAmount" min="0.50" max="100000" step="0.01" placeholder="Exact TOTAL DUE ($)"/>
+        <input type="text" id="bpInvoice" placeholder="Invoice # (optional)"/>
+        <input type="number" id="bpBookingId" min="1" step="1" placeholder="Booking ID (optional)"/>
+        <button id="bpCreate" type="button">Create balance link</button>
+      </div>
+      <div id="bpResult" style="display:none;margin-top:12px;padding:12px;background:#f7faf7;border:1px solid var(--line);border-radius:10px">
+        <div style="font-weight:700;margin-bottom:7px">Payment link ready</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="bpUrl" readonly style="min-width:280px;flex:1"/>
+          <button id="bpCopy" type="button" class="secondary">Copy link</button>
+          <a id="bpOpen" target="_blank" rel="noopener" style="color:var(--btn);font-weight:700">Open</a>
+        </div>
+      </div>
+    </div>
   </div>
 
  <div class="card">
@@ -1631,6 +2012,72 @@ $("saveKey").addEventListener("click", ()=>{ sessionStorage.setItem("chef_admin_
 $("clearKey").addEventListener("click", ()=>{ sessionStorage.removeItem("chef_admin_key"); $("admKey").value=""; toast("Key cleared", true); });
 
 $("refresh").addEventListener("click", ()=> loadAll());
+
+function prefillBalanceForm(booking){
+  $("bpDate").value = isoDateOnly(booking.start_at);
+  $("bpName").value = booking.customer_name || "";
+  $("bpEmail").value = booking.customer_email || "";
+  $("bpPackage").value = booking.package_title || "Private Event";
+  $("bpAmount").value = "";
+  $("bpBookingId").value = booking.id || "";
+  $("bpInvoice").value = "";
+  $("bpResult").style.display = "none";
+  $("balanceCard").scrollIntoView({behavior:"smooth",block:"start"});
+  $("bpAmount").focus();
+  toast("Details loaded — enter the exact TOTAL DUE from the Google invoice", true);
+}
+
+$("bpCreate").addEventListener("click", async ()=>{
+  const button = $("bpCreate");
+  const payload = {
+    eventDate: $("bpDate").value,
+    clientName: $("bpName").value.trim(),
+    clientEmail: $("bpEmail").value.trim(),
+    packageTitle: $("bpPackage").value.trim(),
+    amount: $("bpAmount").value,
+    invoiceNumber: $("bpInvoice").value.trim(),
+    bookingId: $("bpBookingId").value
+  };
+  if(!payload.eventDate || !payload.clientName || !payload.clientEmail || !payload.packageTitle || !payload.amount){
+    toast("Date, client, email, package, and balance are required", false);
+    return;
+  }
+
+  button.disabled = true;
+  button.textContent = "Creating…";
+  $("bpResult").style.display = "none";
+  try{
+    const response = await fetch(BASE + "/api/admin/balance-links", {
+      method: "POST",
+      headers: headers(),
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(()=>({}));
+    if(response.status === 401){ toast("Unauthorized — check your key", false); return; }
+    if(!response.ok){ toast(data.error || "Balance link could not be created", false); return; }
+    $("bpUrl").value = data.url;
+    $("bpOpen").href = data.url;
+    $("bpResult").style.display = "block";
+    toast("Balance link created ✓", true);
+  }catch(error){
+    toast("Balance link could not be created", false);
+  }finally{
+    button.disabled = false;
+    button.textContent = "Create balance link";
+  }
+});
+
+$("bpCopy").addEventListener("click", async ()=>{
+  const value = $("bpUrl").value;
+  if(!value) return;
+  try{
+    await navigator.clipboard.writeText(value);
+  }catch{
+    $("bpUrl").select();
+    document.execCommand("copy");
+  }
+  toast("Payment link copied ✓", true);
+});
 
 async function saveBookingTime(id, date, startTime, endTime){
 
@@ -1808,7 +2255,14 @@ async function loadBookings(){
       delBtn.textContent="Delete";
       delBtn.addEventListener("click", ()=>deleteBooking(b.id));
 
-      right.append(timeBox, delBtn);
+      const balanceBtn=document.createElement("button");
+      balanceBtn.className="secondary";
+      balanceBtn.type="button";
+      balanceBtn.textContent = b.balance_paid_at ? "Balance paid ✓" : "Create balance link";
+      balanceBtn.disabled = Boolean(b.balance_paid_at);
+      balanceBtn.addEventListener("click", ()=>prefillBalanceForm(b));
+
+      right.append(timeBox, balanceBtn, delBtn);
       meta.append(left,right);
       wrap.appendChild(meta);
     });
@@ -2241,6 +2695,7 @@ function timeValueNY(iso){
 app.get("/booking-success", async (req, res) => {
   // Only private-event Checkout sessions receive this flag. Pop-up tickets and
   // gift-card purchasers keep their existing success experience.
+  const isBalanceSuccess = req.query.balance === "1";
   const consultationButton = req.query.consultation === "1" && CONSULTATION_BOOKING_URL
     ? `<div class="consultation">
          <a class="cta" href="${CONSULTATION_BOOKING_URL}" target="_blank" rel="noopener">Schedule your consultation</a>
@@ -2253,7 +2708,7 @@ app.get("/booking-success", async (req, res) => {
   res.end(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>You're Booked!</title>
+<title>${isBalanceSuccess ? "Balance Paid" : "You're Booked!"}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
   :root{--ink:#1f2937;--mut:#6b7280;--btn:#7B8B74;--bg:#fafaf7;}
@@ -2267,9 +2722,9 @@ app.get("/booking-success", async (req, res) => {
 </style></head>
 <body>
 <div class="wrap">
-  <h1>Your booking is confirmed. 🎉</h1>
-  <p>We’ve emailed your confirmation and next steps.</p>
-  ${consultationButton}
+  <h1>${isBalanceSuccess ? "Your balance is paid in full. ✓" : "Your booking is confirmed. 🎉"}</h1>
+  <p>${isBalanceSuccess ? "Thank you. We’ve emailed your payment confirmation and receipt link." : "We’ve emailed your confirmation and next steps."}</p>
+  ${isBalanceSuccess ? "" : consultationButton}
 </div>
 <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 <script>
