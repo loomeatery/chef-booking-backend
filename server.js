@@ -1103,6 +1103,7 @@ app.post("/api/book", checkoutLimiter, async (req, res) => {
     const parsedDate = new Date(`${date}T00:00:00.000Z`);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
+
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
       return res.status(400).json({ error: "Choose a valid event date." });
     }
