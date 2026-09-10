@@ -219,6 +219,20 @@ export function classifyCheckoutPayment(metadata = {}) {
   return "unclassified";
 }
 
+export function bookingAcknowledgementsValid(body = {}) {
+  const hasKitchenField = Object.prototype.hasOwnProperty.call(body, "ackKitchenLeadTime");
+  const hasTermsField = Object.prototype.hasOwnProperty.call(body, "agreedToTerms");
+
+  // The current Squarespace form enforces both required checkboxes in the
+  // browser but its legacy payload does not include either value. Preserve
+  // that live contract until the form payload is updated. Once either field
+  // is present, require both to be explicitly affirmative.
+  if (!hasKitchenField && !hasTermsField) return true;
+
+  const accepted = value => value === true || ["yes", "true", "1", "on"].includes(String(value || "").toLowerCase());
+  return accepted(body.ackKitchenLeadTime) && accepted(body.agreedToTerms);
+}
+
 export function parseDollarAmount(value) {
   const normalized = String(value ?? "").trim();
   if (!/^\d{1,6}(?:\.\d{1,2})?$/.test(normalized)) return null;
@@ -1089,8 +1103,6 @@ app.post("/api/book", checkoutLimiter, async (req, res) => {
     const parsedDate = new Date(`${date}T00:00:00.000Z`);
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
-    const accepted = value => value === true || ["yes", "true", "1", "on"].includes(String(value || "").toLowerCase());
-
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsedDate.getTime()) || parsedDate.toISOString().slice(0, 10) !== date) {
       return res.status(400).json({ error: "Choose a valid event date." });
     }
@@ -1104,7 +1116,7 @@ app.post("/api/book", checkoutLimiter, async (req, res) => {
       return res.status(400).json({ error: "One or more booking details are too long." });
     }
     if (!Number.isInteger(guests) || guests < 1 || guests > 500) return res.status(400).json({ error: "Guest count is invalid." });
-    if (!accepted(b.ackKitchenLeadTime) || !accepted(b.agreedToTerms)) {
+    if (!bookingAcknowledgementsValid(b)) {
       return res.status(400).json({ error: "Kitchen-access and terms acknowledgements are required." });
     }
 
@@ -2847,7 +2859,7 @@ app.post("/api/events/:id/book", checkoutLimiter, async (req, res) => {
 // --------- API: Admin — adjust sold seats (+/-)
 // Use with x-admin-key header. Example to add one seat back:
 // curl -X POST https://<your-host>/api/admin/events/brooklyn-nov14/adjust-sold \
-//   -H 'Content-Type: application/json' -H 'x-admin-key: ULTRACHRIS2022' -d '{"delta":1}'
+//   -H 'Content-Type: application/json' -H 'x-admin-key: YOUR_ADMIN_KEY' -d '{"delta":1}'
 app.post("/api/admin/events/:id/adjust-sold", requireAdmin, (req, res) => {
   try {
     const { id } = req.params;
