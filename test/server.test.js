@@ -15,6 +15,7 @@ const {
   buildBalancePrice,
   buildBalanceProduct,
   buildGenericPaymentEmail,
+  bookingAcknowledgementsValid,
   classifyCheckoutPayment,
   getHolidayPerPerson,
   inAllowedZip,
@@ -154,6 +155,17 @@ test("checkout payments are routed by explicit purpose without changing deposits
   assert.equal(classifyCheckoutPayment({ payment_type: "balance", booking_id: "42" }), "balance");
   assert.equal(classifyCheckoutPayment({ booking_id: "42" }), "deposit");
   assert.equal(classifyCheckoutPayment({}), "unclassified");
+});
+
+test("booking acknowledgements remain compatible with the live Squarespace payload", () => {
+  // The live form has required checkboxes, but its current JSON payload omits
+  // both acknowledgement properties.
+  assert.equal(bookingAcknowledgementsValid({}), true);
+  assert.equal(bookingAcknowledgementsValid({ ackKitchenLeadTime: true }), false);
+  assert.equal(bookingAcknowledgementsValid({ agreedToTerms: true }), false);
+  assert.equal(bookingAcknowledgementsValid({ ackKitchenLeadTime: true, agreedToTerms: true }), true);
+  assert.equal(bookingAcknowledgementsValid({ ackKitchenLeadTime: "yes", agreedToTerms: "on" }), true);
+  assert.equal(bookingAcknowledgementsValid({ ackKitchenLeadTime: false, agreedToTerms: true }), false);
 });
 
 test("balance amounts accept normal currency and reject unsafe values", () => {
