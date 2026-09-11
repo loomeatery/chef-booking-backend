@@ -200,14 +200,16 @@ function protectCalendarResponse(res) {
 export const BOOKING_PACKAGES = Object.freeze({
   tasting:  Object.freeze({ perPerson: 215, depositPct: 0.30 }),
   family:   Object.freeze({ perPerson: 200, depositPct: 0.30 }),
-  cocktail: Object.freeze({ perPerson: 125, depositPct: 0.30 }),
+  // Keep the legacy package ID because the live Squarespace form already uses
+  // it, but price Pig Roast as the same flat-rate package shown to customers.
+  cocktail: Object.freeze({ flatPrice: 2750, depositPct: 0.30 }),
   dinner2:  Object.freeze({ perPerson: 150, depositPct: 0.30 })
 });
 
 export const PACKAGE_TITLES = Object.freeze({
   tasting:  "Tasting Menu",
   family:   "Family-Style Dinner",
-  cocktail: "Cocktail & Canapés",
+  cocktail: "Pig Roast",
   dinner2:  "At Home Pasta Cooking Class"
 });
 
@@ -1050,6 +1052,19 @@ export function getHolidayPerPerson(date, packageId, normalPerPerson) {
 
   return normalPerPerson;
 }
+
+export function calculateBookingSubtotal(packageId, guests, date) {
+  const bookingPackage = BOOKING_PACKAGES[packageId];
+  if (!bookingPackage) return null;
+
+  if (Number.isFinite(bookingPackage.flatPrice)) {
+    return bookingPackage.flatPrice;
+  }
+
+  const perPerson = getHolidayPerPerson(date, packageId, bookingPackage.perPerson);
+  return perPerson * guests;
+}
+
 app.post("/api/quote", quoteLimiter, (req, res) => {
   try {
     const guests = Number(req.body?.guests || 0);
@@ -1060,8 +1075,7 @@ app.post("/api/quote", quoteLimiter, (req, res) => {
       return res.status(400).json({ error: "Guest count is invalid." });
     }
 
-    const perPerson = getHolidayPerPerson(req.body?.date, packageId, sel.perPerson);
-    const subtotal = perPerson * guests;
+    const subtotal = calculateBookingSubtotal(packageId, guests, req.body?.date);
     const deposit  = Math.round(subtotal * sel.depositPct);
     res.json({ subtotal, tax: 0, total: subtotal, deposit });
   } catch (err) {
@@ -1150,9 +1164,8 @@ app.post("/api/book", checkoutLimiter, async (req, res) => {
     }
 
     // 3) Pricing (server-side source of truth)
-   const serverPkg = BOOKING_PACKAGES[packageId];
-const perPerson = getHolidayPerPerson(date, packageId, serverPkg.perPerson);
-const depositPct = serverPkg.depositPct;
+    const serverPkg = BOOKING_PACKAGES[packageId];
+    const depositPct = serverPkg.depositPct;
 
     // Upsells from form (keep yes/no for later invoicing; do NOT price them in Stripe deposit)
     const bartender  = String(b.bartender || "").toLowerCase() === "yes" || b.bartender === true;
@@ -1161,7 +1174,7 @@ const depositPct = serverPkg.depositPct;
     const bartenderFeeCents  = 0;
     const tablescapeFeeCents = 0;
 
-    const baseSubtotalCents  = Math.round(perPerson * guests * 100);
+    const baseSubtotalCents  = Math.round(calculateBookingSubtotal(packageId, guests, date) * 100);
     const subtotalCents      = baseSubtotalCents + bartenderFeeCents + tablescapeFeeCents;
     const depositCents       = Math.round(subtotalCents * depositPct);
     const balanceCents       = subtotalCents - depositCents;

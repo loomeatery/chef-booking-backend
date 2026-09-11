@@ -16,6 +16,7 @@ const {
   buildBalanceProduct,
   buildGenericPaymentEmail,
   bookingAcknowledgementsValid,
+  calculateBookingSubtotal,
   classifyCheckoutPayment,
   getHolidayPerPerson,
   inAllowedZip,
@@ -47,15 +48,23 @@ test("booking package IDs keep their production pricing and titles", () => {
   assert.deepEqual(BOOKING_PACKAGES, {
     tasting: { perPerson: 215, depositPct: 0.30 },
     family: { perPerson: 200, depositPct: 0.30 },
-    cocktail: { perPerson: 125, depositPct: 0.30 },
+    cocktail: { flatPrice: 2750, depositPct: 0.30 },
     dinner2: { perPerson: 150, depositPct: 0.30 }
   });
   assert.deepEqual(PACKAGE_TITLES, {
     tasting: "Tasting Menu",
     family: "Family-Style Dinner",
-    cocktail: "Cocktail & Canapés",
+    cocktail: "Pig Roast",
     dinner2: "At Home Pasta Cooking Class"
   });
+});
+
+test("shared booking pricing keeps Pig Roast flat and other packages per-person", () => {
+  assert.equal(calculateBookingSubtotal("cocktail", 1, "2026-10-10"), 2750);
+  assert.equal(calculateBookingSubtotal("cocktail", 100, "2026-10-10"), 2750);
+  assert.equal(calculateBookingSubtotal("tasting", 6, "2026-10-10"), 1290);
+  assert.equal(calculateBookingSubtotal("family", 8, "2026-12-25"), 2400);
+  assert.equal(calculateBookingSubtotal("dinner2", 8, "2026-10-10"), 1200);
 });
 
 test("service-area ZIP rules accept supported boroughs and counties", () => {
@@ -94,6 +103,23 @@ test("quote endpoint returns the expected live tasting-menu deposit", async () =
     total: 1290,
     deposit: 387
   });
+});
+
+test("quote endpoint returns the Pig Roast flat price and deposit at any guest count", async () => {
+  for (const guests of [1, 8, 100]) {
+    const response = await fetch(`${baseUrl}/api/quote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ packageId: "cocktail", guests, date: "2026-10-10" })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      subtotal: 2750,
+      tax: 0,
+      total: 2750,
+      deposit: 825
+    });
+  }
 });
 
 test("quote endpoint rejects unknown packages and invalid guest counts", async () => {
