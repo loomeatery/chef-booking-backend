@@ -1873,6 +1873,37 @@ app.get("/admin", (_req, res) => {
   .badge{display:inline-block;background:var(--pill);border:1px solid #dcefe3;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--ok)}
   .btns{display:flex;gap:8px;align-items:center}
   input.spin{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
+
+  /* Phone layout only. Desktop styles above remain unchanged. */
+  @media (max-width:700px){
+    html,body{max-width:100%;overflow-x:hidden}
+    header{padding:13px 12px;font-size:15px;line-height:1.3}
+    .wrap{width:100%;padding:10px}
+    .toolbar{flex-wrap:wrap;align-items:center;gap:7px}
+    #admKey{order:2;flex:1 0 100%;width:100%;max-width:none!important;margin-left:0!important}
+    #saveKey,#clearKey{order:3;flex:1}
+    #toast{order:4;flex-basis:100%;margin-left:0}
+    .card{width:100%;min-width:0;border-radius:10px}
+    .head{padding:11px 12px}
+    .pad{padding:11px 12px}
+
+    /* Stack admin form controls so inline desktop widths cannot cause overflow. */
+    .pad>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
+    .pad>div[style*="display:flex"]>input,
+    .pad>div[style*="display:flex"]>button{width:100%!important;min-width:0!important;max-width:none!important}
+    #bpResult>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
+    #bpResult input,#bpResult button{width:100%!important;min-width:0!important}
+
+    /* Convert wide desktop booking rows into compact two-column cards. */
+    .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px}
+    .rowb>div{min-width:0;overflow-wrap:anywhere}
+    .meta{grid-template-columns:1fr;gap:12px;padding:12px}
+    .right{align-items:stretch!important}
+    .right input,.right button{width:100%!important;min-width:0!important}
+    [id^="staff-wrap-"]{flex-direction:column}
+    .evtrow{grid-template-columns:1fr;gap:9px;padding:12px 0}
+    .btns{flex-wrap:wrap}
+  }
 </style>
 </head>
 <body>
