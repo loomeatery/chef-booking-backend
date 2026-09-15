@@ -1839,37 +1839,82 @@ app.get("/admin", (_req, res) => {
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Private Chef Christopher LaMagna Database</title>
+<title>Loom Eatery | Booking Administration</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-  :root{--ink:#203227;--mut:#6b7280;--bg:#f3f7f3;--panel:#fff;--line:#e5e7eb;--btn:#2f6f4f;--pill:#e9f5ee;--bad:#c62828;--ok:#1b5e20}
+  :root{--ink:#183126;--mut:#68746d;--bg:#f4f5f1;--panel:#fff;--line:#dfe5df;--btn:#286844;--btn-dark:#1d5235;--pill:#eaf5ed;--bad:#bd2e2e;--ok:#1f6a3c;--soft:#f7f9f6;--gold:#b79b64;--shadow:0 12px 34px rgba(28,52,39,.07)}
   *{box-sizing:border-box}
-  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0}
-  header{background:#265f2f;color:#fff;padding:14px 16px;font-weight:800}
-  .wrap{max-width:1100px;margin:0 auto;padding:16px}
-  .row{display:grid;grid-template-columns:1fr 360px;gap:16px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px}
-  .head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line);font-weight:700}
-  .pad{padding:12px 14px}
-  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="password"]{border:1px solid var(--line);border-radius:10px;padding:8px 10px}
-  button{background:var(--btn);color:#fff;border:none;border-radius:10px;padding:8px 12px;font-weight:700;cursor:pointer}
+  html{scroll-behavior:smooth}
+  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.45}
+  .topbar{background:linear-gradient(135deg,#173f29,#24623e);color:#fff;border-bottom:3px solid var(--gold)}
+  .topbar-inner{max-width:1180px;margin:0 auto;padding:22px 20px 18px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
+  .eyebrow,.section-kicker{display:block;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
+  .eyebrow{color:#ded1b3;margin-bottom:3px}
+  .brand-title{font-size:24px;font-weight:800;letter-spacing:-.025em}
+  .brand-subtitle{display:block;margin-top:2px;color:rgba(255,255,255,.7);font-size:12px;font-weight:500}
+  .quicknav{display:flex;gap:7px;align-items:center}
+  .quicknav a{color:#fff;text-decoration:none;font-size:12px;font-weight:700;padding:8px 10px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.07)}
+  .quicknav a:hover{background:rgba(255,255,255,.14)}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
+  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);font-weight:800;font-size:17px}
+  .head-copy{display:flex;flex-direction:column;gap:2px}
+  .head .section-kicker{color:var(--gold)}
+  .head-note{font-size:12px;font-weight:500;color:var(--mut)}
+  .pad{padding:16px 18px}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:18px;padding:12px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px rgba(28,52,39,.05)}
+  .toolbar label{font-size:12px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
+  select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="password"],input[type="time"]{min-height:42px;background:#fff;color:var(--ink);border:1px solid #d9e0da;border-radius:10px;padding:9px 11px;font:inherit;font-size:14px;outline:none;transition:border-color .18s,box-shadow .18s,background .18s}
+  select:focus,input:focus{border-color:#4c8b67;box-shadow:0 0 0 3px rgba(49,119,78,.12)}
+  button{min-height:42px;background:var(--btn);color:#fff;border:none;border-radius:10px;padding:9px 14px;font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:background .18s,transform .08s,box-shadow .18s}
+  button:hover{background:var(--btn-dark);box-shadow:0 5px 14px rgba(29,82,53,.14)}
+  button:active{transform:translateY(1px)}
   button:disabled{opacity:.55;cursor:not-allowed}
-  button.secondary{background:#eef3ef;color:#223;border:1px solid var(--line)}
-  button.danger{background:#c62828}
+  button.secondary{background:#f3f6f3;color:#26342c;border:1px solid var(--line)}
+  button.secondary:hover{background:#e8eee9}
+  button.danger{background:#fff3f2;color:var(--bad);border:1px solid #efd0cd}
+  button.danger:hover{background:#fee7e5;box-shadow:none}
+  .tools-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px;align-items:start}
+  .form-grid{display:grid;gap:11px}
+  .form-grid.two{grid-template-columns:1fr 1.35fr}
+  .form-grid.booking{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .field{display:flex;flex-direction:column;gap:5px;min-width:0}
+  .field.wide{grid-column:span 2}
+  .field span{font-size:11px;font-weight:800;color:var(--mut);letter-spacing:.045em;text-transform:uppercase}
+  .field input{width:100%;min-width:0}
+  .form-actions{display:flex;gap:8px;align-items:flex-end;margin-top:12px}
+  .form-actions button{flex:1}
+  details.card>summary,details.inline-tool>summary,details.booking-details>summary{list-style:none;cursor:pointer}
+  details summary::-webkit-details-marker{display:none}
+  .summary-action{font-size:12px;color:var(--btn);background:var(--pill);border:1px solid #d8ebdd;padding:6px 9px;border-radius:999px}
+  details[open] .summary-action{background:#f1f3f1;color:var(--mut)}
+  .inline-tool{border-bottom:1px solid var(--line);background:var(--soft)}
+  .inline-tool>summary{padding:12px 18px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:800;color:var(--btn)}
+  .inline-tool>summary small{font-size:11px;color:var(--mut);font-weight:600}
   .list{display:flex;flex-direction:column}
-  .rowb{display:grid;grid-template-columns:120px 1fr 120px 70px 110px 110px;gap:12px;padding:12px 14px;border-top:1px solid var(--line)}
-  .meta{background:#f7faf7;border-top:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .rowb{display:grid;grid-template-columns:120px 1fr 140px 80px 110px 110px;gap:14px;padding:15px 18px;border-top:1px solid var(--line);align-items:center}
+  .booking-summary{background:#fff}
+  .booking-summary>div{min-width:0}
+  .booking-summary>div::before{content:attr(data-label);display:block;margin-bottom:3px;font-size:9px;font-weight:800;letter-spacing:.1em;color:#8a948e;text-transform:uppercase}
+  .meta{background:var(--soft);border-top:1px solid var(--line)}
+  .meta-grid{padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .booking-actions{display:flex;flex-direction:column;gap:9px;align-items:stretch}
+  .booking-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+  .booking-time-grid .wide{grid-column:1/-1}
+  .booking-time-grid>button{grid-column:1/-1}
+  .detail-label{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#849087;margin:14px 0 4px}
+  .detail-label:first-child{margin-top:0}
+  .mobile-detail-summary{display:none}
   .pill{background:var(--pill);color:var(--ok);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block;border:1px solid #dcefe3}
   .pill.gray{background:#f1f1f1;color:#555;border-color:#e5e7eb}
-  .small{font-size:12px;color:#666}
+  .small{font-size:12px;color:var(--mut)}
   .right{display:flex;gap:8px;justify-content:flex-end}
-  .empty{padding:12px 14px;color:#6b7280}
+  .empty{padding:18px;color:var(--mut)}
   #toast{font-size:13px;margin-left:8px}
   .ok{color:var(--ok)} .bad{color:var(--bad)}
 
   /* Pop-Up Events rows */
-  .evtrow{display:grid;grid-template-columns:1.4fr 140px 210px 1fr;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid var(--line)}
+  .evtrow{display:grid;grid-template-columns:1.4fr 140px 210px 1fr;gap:12px;align-items:center;padding:14px 18px;border-top:1px solid var(--line)}
   .badge{display:inline-block;background:var(--pill);border:1px solid #dcefe3;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--ok)}
   .btns{display:flex;gap:8px;align-items:center}
   input.spin{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
@@ -1877,27 +1922,37 @@ app.get("/admin", (_req, res) => {
   /* Phone layout only. Desktop styles above remain unchanged. */
   @media (max-width:700px){
     html,body{max-width:100%;overflow-x:hidden}
-    header{padding:13px 12px;font-size:15px;line-height:1.3}
-    .wrap{width:100%;padding:10px}
-    .toolbar{flex-wrap:wrap;align-items:center;gap:7px}
+    .topbar-inner{padding:16px 14px 12px;display:block}
+    .brand-title{font-size:20px}
+    .brand-subtitle{font-size:11px}
+    .quicknav{margin-top:13px;overflow-x:auto;padding-bottom:3px;scrollbar-width:none}
+    .quicknav::-webkit-scrollbar{display:none}
+    .quicknav a{flex:0 0 auto;padding:7px 9px}
+    .wrap{width:100%;padding:12px}
+    .toolbar{flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:12px;padding:10px}
     #admKey{order:2;flex:1 0 100%;width:100%;max-width:none!important;margin-left:0!important}
     #saveKey,#clearKey{order:3;flex:1}
     #toast{order:4;flex-basis:100%;margin-left:0}
-    .card{width:100%;min-width:0;border-radius:10px}
-    .head{padding:11px 12px}
-    .pad{padding:11px 12px}
-
-    /* Stack admin form controls so inline desktop widths cannot cause overflow. */
-    .pad>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
-    .pad>div[style*="display:flex"]>input,
-    .pad>div[style*="display:flex"]>button{width:100%!important;min-width:0!important;max-width:none!important}
+    .card{width:100%;min-width:0;border-radius:13px;box-shadow:0 8px 22px rgba(28,52,39,.055)}
+    .head{padding:14px;font-size:16px}
+    .pad{padding:14px}
+    .tools-grid{grid-template-columns:1fr;gap:12px;margin-bottom:12px}
+    .form-grid.two,.form-grid.booking{grid-template-columns:1fr}
+    .field.wide{grid-column:auto}
+    .form-actions{flex-direction:column;align-items:stretch}
+    .form-actions button{width:100%}
+    .inline-tool>summary{padding:12px 14px}
     #bpResult>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
     #bpResult input,#bpResult button{width:100%!important;min-width:0!important}
 
     /* Convert wide desktop booking rows into compact two-column cards. */
-    .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;padding:12px}
+    .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:13px 16px;padding:15px 14px}
     .rowb>div{min-width:0;overflow-wrap:anywhere}
-    .meta{grid-template-columns:1fr;gap:12px;padding:12px}
+    .booking-summary>div:nth-child(5),.booking-summary>div:nth-child(6){align-self:end}
+    .mobile-detail-summary{display:flex!important;align-items:center;justify-content:space-between;padding:12px 14px;font-size:13px;font-weight:800;color:var(--btn)}
+    .mobile-detail-summary::after{content:"+";font-size:18px;font-weight:500}
+    .booking-details[open]>.mobile-detail-summary::after{content:"–"}
+    .meta-grid{grid-template-columns:1fr;gap:16px;padding:14px}
     .right{align-items:stretch!important}
     .right input,.right button{width:100%!important;min-width:0!important}
     [id^="staff-wrap-"]{flex-direction:column}
@@ -1907,7 +1962,22 @@ app.get("/admin", (_req, res) => {
 </style>
 </head>
 <body>
-<header>Private Chef Christopher LaMagna Database</header>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <span class="eyebrow">Loom Eatery</span>
+      <div class="brand-title">Booking Administration</div>
+      <span class="brand-subtitle">Private Chef Christopher LaMagna</span>
+    </div>
+    <nav class="quicknav" aria-label="Admin sections">
+      <a href="#bookingsCard">Bookings</a>
+      <a href="#blackoutCard">Blackouts</a>
+      <a href="#balanceCard">Payments</a>
+      <a href="#eventsCard">Events</a>
+      <a href="/admin/gift-cards">Gift cards</a>
+    </nav>
+  </div>
+</header>
 <div class="wrap">
   <div class="toolbar">
     <label>Month</label>
@@ -1922,20 +1992,24 @@ app.get("/admin", (_req, res) => {
     <span id="toast"></span>
   </div>
 
-  <div class="card" id="balanceCard" style="margin-bottom:16px">
-    <div class="head">Create Remaining Balance Link</div>
+  <div class="tools-grid">
+  <details class="card" id="balanceCard">
+    <summary class="head">
+      <span class="head-copy"><span class="section-kicker">Payments</span>Create Remaining Balance Link</span>
+      <span class="summary-action">Open tool</span>
+    </summary>
     <div class="pad">
       <div class="small" style="margin-bottom:10px">Copy the exact <strong>TOTAL DUE</strong> from your Google invoice. This creates a one-use Stripe link that turns off after payment and sends the paid-in-full email automatically.</div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-        <input type="date" id="bpDate" aria-label="Event date"/>
-        <input type="text" id="bpName" placeholder="Client name"/>
-        <input type="email" id="bpEmail" placeholder="Client email" style="min-width:230px"/>
-        <input type="text" id="bpPackage" placeholder="Package / Event"/>
+      <div class="form-grid two">
+        <label class="field"><span>Event date</span><input type="date" id="bpDate"/></label>
+        <label class="field"><span>Client name</span><input type="text" id="bpName" placeholder="Full name"/></label>
+        <label class="field wide"><span>Client email</span><input type="email" id="bpEmail" placeholder="name@example.com"/></label>
+        <label class="field wide"><span>Package / event</span><input type="text" id="bpPackage" placeholder="Tasting Menu"/></label>
+        <label class="field"><span>Exact total due</span><input type="number" id="bpAmount" min="0.50" max="100000" step="0.01" placeholder="$0.00"/></label>
+        <label class="field"><span>Invoice number</span><input type="text" id="bpInvoice" placeholder="Optional"/></label>
+        <label class="field wide"><span>Booking ID</span><input type="number" id="bpBookingId" min="1" step="1" placeholder="Optional"/></label>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input type="number" id="bpAmount" min="0.50" max="100000" step="0.01" placeholder="Exact TOTAL DUE ($)"/>
-        <input type="text" id="bpInvoice" placeholder="Invoice # (optional)"/>
-        <input type="number" id="bpBookingId" min="1" step="1" placeholder="Booking ID (optional)"/>
+      <div class="form-actions">
         <button id="bpCreate" type="button">Create balance link</button>
       </div>
       <div id="bpResult" style="display:none;margin-top:12px;padding:12px;background:#f7faf7;border:1px solid var(--line);border-radius:10px">
@@ -1947,57 +2021,66 @@ app.get("/admin", (_req, res) => {
         </div>
       </div>
     </div>
-  </div>
+  </details>
 
- <div class="card">
-  <div class="head">Bookings</div>
-
-  <div class="pad">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-      <input type="date" id="bkDate"/>
-      <input type="text" id="bkName" placeholder="Client name"/>
-      <input type="text" id="bkEmail" placeholder="Email (optional)"/>
-      <input type="text" id="bkPackage" placeholder="Package / Event"/>
-      <input type="text" id="bkGuests" placeholder="Guests" style="width:90px"/>
-    </div>
-
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
-      <input type="text" id="bkAddress1" placeholder="Address" style="min-width:260px;flex:1"/>
-      <input type="text" id="bkCity" placeholder="City" style="width:150px"/>
-      <input type="text" id="bkState" placeholder="State" style="width:90px"/>
-      <input type="text" id="bkZip" placeholder="ZIP" style="width:110px"/>
-    </div>
-
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <input type="text" id="bkPhone" placeholder="Phone" style="width:160px"/>
-      <input type="text" id="bkDietNotes" placeholder="Diet notes / notes" style="min-width:260px;flex:1"/>
-      <button id="bkAdd" type="button">Add booking</button>
-    </div>
-  </div>
-
-  <div class="list" id="bookings"></div>
-</div>
-
-    <div class="card">
-      <div class="head">Blackout Dates</div>
+    <div class="card" id="blackoutCard">
+      <div class="head">
+        <span class="head-copy"><span class="section-kicker">Availability</span>Blackout dates</span>
+        <span class="head-note">Blocks online booking</span>
+      </div>
       <div class="pad">
-        <div style="display:flex;gap:8px;align-items:center">
-          <input type="date" id="bdDate"/>
-          <input type="text" id="bdReason" placeholder="Reason (optional)" style="flex:1"/>
-          <button id="bdAdd" type="button">Add blackout</button>
+        <div class="form-grid two">
+          <label class="field"><span>Date</span><input type="date" id="bdDate"/></label>
+          <label class="field"><span>Reason</span><input type="text" id="bdReason" placeholder="Optional private note"/></label>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
-          <input type="text" id="bdBulk" placeholder="Bulk add: YYYY-MM-DD,YYYY-MM-DD" style="flex:1"/>
-          <button id="bdBulkBtn" type="button">Add bulk</button>
-        </div>
+        <div class="form-actions"><button id="bdAdd" type="button">Add blackout date</button></div>
+        <details class="inline-tool" style="margin:14px -18px -16px">
+          <summary><span>Add multiple dates</span><small>Bulk tool</small></summary>
+          <div class="pad">
+            <label class="field"><span>Dates separated by commas</span><input type="text" id="bdBulk" placeholder="2026-10-06, 2026-10-07"/></label>
+            <div class="form-actions"><button id="bdBulkBtn" type="button" class="secondary">Add all dates</button></div>
+          </div>
+        </details>
       </div>
       <div class="list" id="blackouts"></div>
     </div>
   </div>
 
+ <div class="card" id="bookingsCard">
+  <div class="head">
+    <span class="head-copy"><span class="section-kicker">Schedule</span>Bookings</span>
+    <span class="head-note">Selected month</span>
+  </div>
+
+  <details class="inline-tool" id="addBookingTool">
+    <summary><span>Add a booking manually</span><small>Open form</small></summary>
+    <div class="pad">
+      <div class="form-grid booking">
+        <label class="field"><span>Event date</span><input type="date" id="bkDate"/></label>
+        <label class="field"><span>Client name</span><input type="text" id="bkName" placeholder="Full name"/></label>
+        <label class="field"><span>Email</span><input type="email" id="bkEmail" placeholder="Optional"/></label>
+        <label class="field"><span>Package / event</span><input type="text" id="bkPackage" placeholder="Private Event"/></label>
+        <label class="field"><span>Guests</span><input type="number" id="bkGuests" min="1" placeholder="Count"/></label>
+        <label class="field wide"><span>Address</span><input type="text" id="bkAddress1" placeholder="Street address"/></label>
+        <label class="field"><span>City</span><input type="text" id="bkCity"/></label>
+        <label class="field"><span>State</span><input type="text" id="bkState" placeholder="NY"/></label>
+        <label class="field"><span>ZIP</span><input type="text" id="bkZip" inputmode="numeric"/></label>
+        <label class="field"><span>Phone</span><input type="text" id="bkPhone" inputmode="tel"/></label>
+        <label class="field wide"><span>Dietary notes / notes</span><input type="text" id="bkDietNotes" placeholder="Optional"/></label>
+      </div>
+      <div class="form-actions"><button id="bkAdd" type="button">Add booking</button></div>
+    </div>
+  </details>
+
+  <div class="list" id="bookings"></div>
+</div>
+
   <!-- Pop-Up Events Card -->
-  <div class="card" style="margin-top:16px">
-    <div class="head">Pop-Up Events (Seats)</div>
+  <div class="card" id="eventsCard" style="margin-top:16px">
+    <div class="head">
+      <span class="head-copy"><span class="section-kicker">Events</span>Pop-up seats</span>
+      <span class="head-note">Live inventory</span>
+    </div>
     <div class="pad">
       <div class="small" style="color:#666;margin-bottom:8px">
         Adjust seats when you add/remove a guest manually or issue a refund. Changes reflect on the site immediately.
@@ -2071,6 +2154,7 @@ $("clearKey").addEventListener("click", ()=>{ sessionStorage.removeItem("chef_ad
 $("refresh").addEventListener("click", ()=> loadAll());
 
 function prefillBalanceForm(booking){
+  $("balanceCard").open = true;
   $("bpDate").value = isoDateOnly(booking.start_at);
   $("bpName").value = booking.customer_name || "";
   $("bpEmail").value = booking.customer_email || "";
@@ -2214,27 +2298,40 @@ async function loadBookings(){
     }
 
     data.forEach(b=>{
-      const row=document.createElement("div"); row.className="rowb";
+      const row=document.createElement("div"); row.className="rowb booking-summary";
       const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
       const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+esc(b.customer_name||"—")+'</div><div class="small">'+esc(b.customer_email||"—")+'</div>';
       const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
       const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
       const col5=document.createElement("div"); col5.textContent = usd(b.deposit_cents);
       const col6=document.createElement("div"); col6.innerHTML = '<span class="pill '+(b.status==="confirmed"?'':'gray')+'">'+esc(b.status||"—")+'</span>';
+      [
+        [col1,"Date"],
+        [col2,"Client"],
+        [col3,"Experience"],
+        [col4,"Guests"],
+        [col5,"Deposit"],
+        [col6,"Status"]
+      ].forEach(([column,label])=>{ column.dataset.label=label; });
       row.append(col1,col2,col3,col4,col5,col6);
       wrap.appendChild(row);
 
-      const meta=document.createElement("div"); meta.className="meta";
+      const meta=document.createElement("details"); meta.className="meta booking-details";
+      meta.open = !window.matchMedia("(max-width:700px)").matches;
+      const metaSummary=document.createElement("summary");
+      metaSummary.className="mobile-detail-summary";
+      metaSummary.textContent="View details and actions";
+      const metaGrid=document.createElement("div"); metaGrid.className="meta-grid";
       const left=document.createElement("div");
 
       left.innerHTML =
-        '<div style="font-weight:800;margin-bottom:6px">Address</div>'
+        '<div class="detail-label">Address</div>'
         + '<div class="small">'+esc([b.address_line1,b.city,b.state,b.zip].filter(Boolean).join(", "))+'</div>'
-        + '<div style="font-weight:800;margin:12px 0 6px">Phone</div>'
+        + '<div class="detail-label">Phone</div>'
         + '<div class="small">'+esc(b.phone||"—")+'</div>'
-        + '<div style="font-weight:800;margin:12px 0 6px">Diet notes</div>'
+        + '<div class="detail-label">Diet notes</div>'
         + '<div class="small" style="white-space:pre-wrap">'+esc(b.diet_notes||"—")+'</div>'
-        + '<div style="font-weight:800;margin:12px 0 6px">Staff</div>'
+        + '<div class="detail-label">Staff</div>'
         + '<div id="staff-wrap-'+b.id+'" style="display:flex;gap:8px;margin-top:6px"></div>'
         + '<div style="margin-top:12px;display:flex;gap:8px">'+(b.bartender?'<span class="pill">Bartender</span>':'')+(b.tablescape?'<span class="pill">Tablescape</span>':'')+'</div>';
 
@@ -2260,18 +2357,10 @@ async function loadBookings(){
       staffWrap.append(staffInput, staffBtn);
 
       const right=document.createElement("div");
-      right.className="right";
-      right.style.display = "flex";
-      right.style.flexDirection = "column";
-      right.style.gap = "8px";
-      right.style.alignItems = "flex-end";
+      right.className="booking-actions";
 
       const timeBox = document.createElement("div");
-      timeBox.style.display = "flex";
-      timeBox.style.gap = "6px";
-      timeBox.style.alignItems = "center";
-      timeBox.style.flexWrap = "wrap";
-      timeBox.style.justifyContent = "flex-end";
+      timeBox.className="booking-time-grid";
 
       const dateInput = document.createElement("input");
       dateInput.type = "date";
@@ -2299,12 +2388,22 @@ async function loadBookings(){
         );
       });
 
-      timeBox.append(
-        dateInput,
-        startInput,
-        endInput,
-        saveBtn
-      );
+      const dateField = document.createElement("label");
+      dateField.className = "field wide";
+      dateField.innerHTML = "<span>Event date</span>";
+      dateField.appendChild(dateInput);
+
+      const startField = document.createElement("label");
+      startField.className = "field";
+      startField.innerHTML = "<span>Start time</span>";
+      startField.appendChild(startInput);
+
+      const endField = document.createElement("label");
+      endField.className = "field";
+      endField.innerHTML = "<span>End time</span>";
+      endField.appendChild(endInput);
+
+      timeBox.append(dateField,startField,endField,saveBtn);
 
       const delBtn=document.createElement("button");
       delBtn.className="danger";
@@ -2320,7 +2419,8 @@ async function loadBookings(){
       balanceBtn.addEventListener("click", ()=>prefillBalanceForm(b));
 
       right.append(timeBox, balanceBtn, delBtn);
-      meta.append(left,right);
+      metaGrid.append(left,right);
+      meta.append(metaSummary,metaGrid);
       wrap.appendChild(meta);
     });
 
