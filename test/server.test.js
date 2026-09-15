@@ -294,3 +294,46 @@ test("admin page renders the balance-link tool with valid browser JavaScript", a
   assert.ok(script, "admin script should be present");
   assert.doesNotThrow(() => new Function(script));
 });
+
+test("New York event times handle seconds, winter, summer and overnight events", async () => {
+  const { bookingTimeRange } = await import("../server.js");
+  const summer = bookingTimeRange("2026-09-24", "19:00:00", "23:30:00");
+  assert.equal(summer.start.toISOString(), "2026-09-24T23:00:00.000Z");
+  assert.equal(summer.end.toISOString(), "2026-09-25T03:30:00.000Z");
+  const winter = bookingTimeRange("2026-12-24", "19:00", "01:00");
+  assert.equal(winter.start.toISOString(), "2026-12-25T00:00:00.000Z");
+  assert.equal(winter.end.toISOString(), "2026-12-25T06:00:00.000Z");
+  const defaultEnd = bookingTimeRange("2026-09-24", "19:00", "");
+  assert.equal(defaultEnd.end - defaultEnd.start, 4 * 3600000);
+  assert.throws(() => bookingTimeRange("2026-03-08", "02:30", "04:00"), /daylight saving/);
+  assert.throws(() => bookingTimeRange("2026-02-30", "19:00", "20:00"), /valid event date/);
+  assert.throws(() => bookingTimeRange("2026-09-24", "25:00", "20:00"), /valid start/);
+});
+
+test("admin time save round-trips through listing and calendar with a stub database", async t => {
+  const { default: pg } = await import("pg");
+  let saved;
+  t.mock.method(pg.Pool.prototype, "query", async (sql, values) => {
+    if (/UPDATE bookings/.test(sql)) {
+      saved = { id: 42, start_at: new Date(values[1]), end_at: new Date(values[2]), status: "confirmed" };
+      return { rowCount: 1, rows: [saved] };
+    }
+    if (/FROM bookings/.test(sql)) return { rowCount: 1, rows: [saved] };
+    throw new Error("Unexpected query");
+  });
+  const headers = { "Content-Type": "application/json", "x-admin-key": "test-admin-key" };
+  const response = await fetch(baseUrl + "/api/admin/bookings/42/time", {
+    method: "PUT", headers,
+    body: JSON.stringify({date:"2026-09-24",startTime:"19:00:00",endTime:"23:30:00"})
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).booking.start_at, "2026-09-24T23:00:00.000Z");
+  const listing = await fetch(baseUrl + "/__admin/list-bookings?year=2026&month=9", {headers});
+  assert.equal((await listing.json())[0].end_at, "2026-09-25T03:30:00.000Z");
+  const feed = await (await fetch(baseUrl + "/calendar.ics")).text();
+  assert.match(feed, /20260924T230000/);
+  const invalid = await fetch(baseUrl + "/api/admin/bookings/42/time", {
+    method:"PUT", headers, body:JSON.stringify({date:"2026-09-24",startTime:"invalid"})
+  });
+  assert.equal(invalid.status, 400);
+});
