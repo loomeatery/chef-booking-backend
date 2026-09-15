@@ -1556,6 +1556,41 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   }
 });
 
+// Interpret admin wall-clock times in New York, independently of the server TZ.
+export function bookingTimeRange(date, startTime, endTime) {
+  if (!isValidISODate(date)) throw new Error("Choose a valid event date.");
+  const normalize = value => {
+    const match = /^(\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?$/.exec(String(value || ""));
+    if (!match || +match[1] > 23 || +match[2] > 59) throw new Error("Choose a valid start and end time.");
+    return match[1] + ":" + match[2];
+  };
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  });
+  const instant = (day, time) => {
+    const wall = Date.parse(day + "T" + time + ":00Z");
+    // NY is UTC-4 in daylight time and UTC-5 in standard time.
+    for (const hours of [4, 5]) {
+      const candidate = new Date(wall + hours * 3600000);
+      const p = Object.fromEntries(formatter.formatToParts(candidate).map(p => [p.type, p.value]));
+      if (p.year + "-" + p.month + "-" + p.day === day && p.hour + ":" + p.minute === time) return candidate;
+    }
+    throw new Error("That time does not exist due to daylight saving. Choose another time.");
+  };
+  const startClock = normalize(startTime);
+  const start = instant(date, startClock);
+  if (!endTime) return { start, end: new Date(start.getTime() + 4 * 3600000) };
+  const endClock = normalize(endTime);
+  let endDate = date;
+  if (endClock <= startClock) {
+    const next = new Date(date + "T12:00:00Z");
+    next.setUTCDate(next.getUTCDate() + 1);
+    endDate = next.toISOString().slice(0, 10);
+  }
+  return { start, end: instant(endDate, endClock) };
+}
+
 app.put("/api/admin/bookings/:id/time", requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -1565,15 +1600,10 @@ app.put("/api/admin/bookings/:id/time", requireAdmin, async (req, res) => {
     if (!date) return res.status(400).json({ error: "date required" });
     if (!startTime) return res.status(400).json({ error: "startTime required" });
 
-    const start = new Date(`${date}T${startTime}:00`);
-
-    const end = endTime
-      ? new Date(`${date}T${endTime}:00`)
-      : new Date(start.getTime() + 4 * 60 * 60 * 1000);
-
-    if (end <= start) {
-      end.setDate(end.getDate() + 1);
-    }
+    let times;
+    try { times = bookingTimeRange(date, startTime, endTime); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
+    const { start, end } = times;
 
     const r = await pool.query(
       `UPDATE bookings
@@ -1748,10 +1778,8 @@ app.get("/calendar.ics", async (req, res) => {
       ORDER BY start_at ASC
     `);
 
-    const cal = ical({
-      name: "Chef Chris Bookings",
-      timezone: "America/New_York"
-    });
+    // Emit UTC instants with Z; calendar clients display them in local time.
+    const cal = ical({ name: "Chef Chris Bookings" });
 
     for (const b of result.rows) {
 
@@ -1842,7 +1870,7 @@ app.get("/admin", (_req, res) => {
 <title>Loom Eatery | Booking Administration</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-  :root{--ink:#1d1d1f;--mut:#6e6e73;--bg:#f5f5f7;--panel:#fff;--line:#e8e8ed;--btn:#0071e3;--pill:#edf8f0;--bad:#b42318;--ok:#217a40;--soft:#fafafa}
+  :root{--ink:#1d1d1f;--mut:#6e6e73;--bg:#f5f5f7;--panel:#fff;--line:#e8e8ed;--btn:#5d7862;--pill:#edf8f0;--bad:#b42318;--ok:#217a40;--soft:#fafafa}
   *{box-sizing:border-box}
   html{scroll-behavior:smooth;scroll-padding-top:24px}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -1862,7 +1890,8 @@ app.get("/admin", (_req, res) => {
   .card{min-width:0;background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 2px 8px #00000003;overflow:hidden;scroll-margin-top:20px}
   #bookingsCard{grid-column:1/-1;grid-row:2}
   #balanceCard{grid-column:1;grid-row:3}
-  #eventsCard{grid-column:2;grid-row:3;margin-top:0!important}
+  #eventsCard{display:none!important}
+  #balanceCard{grid-column:1/-1}
   #blackoutCard{grid-column:1/-1;grid-row:4}
   .head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--line);font-size:20px;letter-spacing:-.5px;font-weight:600}
   .head-copy{display:flex;flex-direction:column;gap:3px}
@@ -1876,15 +1905,15 @@ app.get("/admin", (_req, res) => {
   input,select,button{font:inherit}
   select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="time"],input[type="password"]{color:var(--ink);background:#fff;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #d2d2d7;border-radius:10px;font-size:14px;outline:none}
   input::placeholder{color:#89898f;opacity:1}
-  input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px #0071e326}
+  input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px #5d786226}
   button{min-height:44px;padding:10px 17px;border:1px solid transparent;border-radius:10px;background:var(--btn);color:white;font-size:13px;font-weight:550;cursor:pointer}
-  button:hover{background:#0077ed}
+  button:hover{background:#506b55}
   button:disabled{opacity:.5;cursor:not-allowed}
   button.secondary{background:#f0f0f3;color:#38383d;border-color:transparent}
   button.secondary:hover{background:#e7e7ec}
   button.danger{color:var(--bad);background:#fff;border-color:#eddcda}
   button.danger:hover{background:#fff4f2}
-  button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid #0071e366;outline-offset:3px}
+  button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid #5d786266;outline-offset:3px}
   .form-grid{display:grid;gap:16px}
   .form-grid.two{grid-template-columns:1fr 1fr}
   .form-grid.booking{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -1925,10 +1954,10 @@ app.get("/admin", (_req, res) => {
   .empty{padding:24px;color:var(--mut);font-size:13px}
   .evtrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:18px 0;border-top:1px solid var(--line)}
   input.spin{width:70px}
-  #toast{font-size:12px;flex-basis:100%}
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);width:max-content;max-width:calc(100vw - 32px);padding:14px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 32px #0002;font-size:13px;z-index:100;pointer-events:none}
   #toast:empty{display:none}
   .ok{color:var(--ok)}.bad{color:var(--bad)}
-  #bpResult{background:#f5faff!important}
+  #bpResult{background:#f4f7f3!important}
   @media(min-width:701px) and (max-width:1000px){
     .topbar-inner{align-items:flex-start;flex-direction:column}
     .rowb{grid-template-columns:80px minmax(0,1.8fr) minmax(0,1fr) 50px 70px 90px;gap:10px}
@@ -1990,7 +2019,6 @@ app.get("/admin", (_req, res) => {
     <nav class="quicknav" aria-label="Admin sections">
       <a href="#bookingsCard">Bookings</a>
       <a href="#balanceCard">Payments</a>
-      <a href="#eventsCard">Events</a>
       <a href="#blackoutCard">Blackouts</a>
       <a href="/admin/gift-cards">Gift cards</a>
     </nav>
@@ -2007,7 +2035,7 @@ app.get("/admin", (_req, res) => {
     <input id="admKey" class="wide" style="max-width:260px;margin-left:auto" type="password" placeholder="Admin key (x-admin-key)"/>
     <button id="saveKey" type="button" class="secondary">Save</button>
     <button id="clearKey" type="button" class="secondary">Clear</button>
-    <span id="toast"></span>
+    <span id="toast" role="status" aria-live="polite"></span>
   </div>
 
 
@@ -2072,7 +2100,7 @@ app.get("/admin", (_req, res) => {
   </details>
 
   <!-- Pop-Up Events Card -->
-  <div class="card" id="eventsCard" style="margin-top:16px">
+  <div class="card" id="eventsCard" hidden style="display:none;margin-top:16px">
     <div class="head">
       <span class="head-copy"><span class="section-kicker">Events</span>Pop-up seats</span>
       <span class="head-note">Live inventory</span>
@@ -2126,11 +2154,19 @@ function isoDateOnly(iso){
 
 function timeValueNY(iso){
   if(!iso) return "";
-
-  const parts = String(iso).split("T");
-  if(!parts[1]) return "";
-
-  return parts[1].slice(0,5);
+  return new Intl.DateTimeFormat("en-GB",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(iso));
+}
+function isAllDayBooking(b){
+  const start = new Date(b.start_at), end = new Date(b.end_at);
+  return start.getUTCHours() === 0 && start.getUTCMinutes() === 0 && end-start === 86400000;
+}
+function bookingDateNY(b){
+  // Existing midnight-to-midnight records represent an all-day reservation.
+  const start = new Date(b.start_at), end = new Date(b.end_at);
+  if(start.getUTCHours() === 0 && start.getUTCMinutes() === 0 && end-start === 86400000) return isoDateOnly(b.start_at);
+  const parts = new Intl.DateTimeFormat("en-CA",{timeZone:"America/New_York",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(start);
+  const p = Object.fromEntries(parts.map(p=>[p.type,p.value]));
+  return p.year+"-"+p.month+"-"+p.day;
 }
 
   function headers(){
@@ -2141,7 +2177,7 @@ function timeValueNY(iso){
   }
 
   async function getJSON(path){
-    const r = await fetch(BASE + path, { headers: headers() });
+    const r = await fetch(BASE + path, { headers: headers(), cache:"no-store" });
     if (r.status === 401) throw new Error("unauthorized");
     try { return await r.json(); } catch { return []; }
   }
@@ -2172,7 +2208,7 @@ $("refresh").addEventListener("click", ()=> loadAll());
 
 function prefillBalanceForm(booking){
   $("balanceCard").open = true;
-  $("bpDate").value = isoDateOnly(booking.start_at);
+  $("bpDate").value = bookingDateNY(booking);
   $("bpName").value = booking.customer_name || "";
   $("bpEmail").value = booking.customer_email || "";
   $("bpPackage").value = booking.package_title || "Private Event";
@@ -2237,13 +2273,15 @@ $("bpCopy").addEventListener("click", async ()=>{
   toast("Payment link copied ✓", true);
 });
 
-async function saveBookingTime(id, date, startTime, endTime){
+async function saveBookingTime(id, date, startTime, endTime, button){
 
   if(!date || !startTime){
     toast("Date and start time required", false);
     return;
   }
 
+  if(button){button.disabled=true;button.textContent="Saving…";}
+  try {
   const r = await fetch(BASE + "/api/admin/bookings/" + id + "/time", {
     method: "PUT",
     headers: headers(),
@@ -2259,11 +2297,14 @@ async function saveBookingTime(id, date, startTime, endTime){
     return;
   }
 
-  if(r.ok){
-    toast("Time updated ✓", true);
-    loadBookings();
-  } else {
-    toast("Time update failed", false);
+  const result = await r.json().catch(()=>({}));
+  if(!r.ok || !result.ok) throw new Error(result.error || "Time could not be saved.");
+  await loadBookings();
+  toast("Time saved ✓ · New York time. Calendar subscriptions may take time to refresh.", true);
+  } catch(error) {
+    toast(error.message || "Connection problem. Time was not saved; try again.", false);
+  } finally {
+    if(button){button.disabled=false;button.textContent="Save time";}
   }
 }
 
@@ -2316,7 +2357,7 @@ async function loadBookings(){
 
     data.forEach(b=>{
       const row=document.createElement("div"); row.className="rowb booking-summary";
-      const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(b.start_at)+'</div><div class="small">'+new Date(b.start_at).getUTCFullYear()+'</div>';
+      const col1=document.createElement("div"); col1.innerHTML = '<div style="font-weight:800">'+dMD(bookingDateNY(b))+'</div><div class="small">'+bookingDateNY(b).slice(0,4)+'</div>';
       const col2=document.createElement("div"); col2.innerHTML = '<div style="font-weight:700">'+esc(b.customer_name||"—")+'</div><div class="small">'+esc(b.customer_email||"—")+'</div>';
       const col3=document.createElement("div"); col3.textContent = b.package_title || "—";
       const col4=document.createElement("div"); col4.textContent = (b.guests!=null?b.guests:"—");
@@ -2381,15 +2422,15 @@ async function loadBookings(){
 
       const dateInput = document.createElement("input");
       dateInput.type = "date";
-      dateInput.value = isoDateOnly(b.start_at);
+      dateInput.value = bookingDateNY(b);
 
       const startInput = document.createElement("input");
       startInput.type = "time";
-      startInput.value = timeValueNY(b.start_at);
+      startInput.value = isAllDayBooking(b) ? "" : timeValueNY(b.start_at);
 
       const endInput = document.createElement("input");
       endInput.type = "time";
-      endInput.value = timeValueNY(b.end_at);
+      endInput.value = isAllDayBooking(b) ? "" : timeValueNY(b.end_at);
 
       const saveBtn = document.createElement("button");
       saveBtn.type = "button";
@@ -2401,7 +2442,8 @@ async function loadBookings(){
           b.id,
           dateInput.value,
           startInput.value,
-          endInput.value
+          endInput.value,
+          saveBtn
         );
       });
 
@@ -2412,12 +2454,12 @@ async function loadBookings(){
 
       const startField = document.createElement("label");
       startField.className = "field";
-      startField.innerHTML = "<span>Start time</span>";
+      startField.innerHTML = "<span>Start time · New York</span>";
       startField.appendChild(startInput);
 
       const endField = document.createElement("label");
       endField.className = "field";
-      endField.innerHTML = "<span>End time</span>";
+      endField.innerHTML = "<span>End time · New York</span>";
       endField.appendChild(endInput);
 
       timeBox.append(dateField,startField,endField,saveBtn);
@@ -2571,7 +2613,7 @@ async function loadBookings(){
 
   async function loadEventsAdmin(){
     const wrap = $("events");
-    if (!wrap) return;
+    if (!wrap || $("eventsCard").hidden) return;
     wrap.innerHTML = "";
     try{
       const list = await (await fetch("/api/events")).json();
