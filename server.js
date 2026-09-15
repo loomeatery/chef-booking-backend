@@ -1845,7 +1845,7 @@ app.get("/admin", (_req, res) => {
   :root{--ink:#183126;--mut:#68746d;--bg:#f4f5f1;--panel:#fff;--line:#dfe5df;--btn:#286844;--btn-dark:#1d5235;--pill:#eaf5ed;--bad:#bd2e2e;--ok:#1f6a3c;--soft:#f7f9f6;--gold:#b79b64;--shadow:0 12px 34px rgba(28,52,39,.07)}
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
-  body{font-family:Inter,ui-sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.45}
+  body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.45}
   .topbar{background:linear-gradient(135deg,#173f29,#24623e);color:#fff;border-bottom:3px solid var(--gold)}
   .topbar-inner{max-width:1180px;margin:0 auto;padding:22px 20px 18px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
   .eyebrow,.section-kicker{display:block;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
