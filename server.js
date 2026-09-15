@@ -1842,123 +1842,141 @@ app.get("/admin", (_req, res) => {
 <title>Loom Eatery | Booking Administration</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
 <style>
-  :root{--ink:#183126;--mut:#68746d;--bg:#f4f5f1;--panel:#fff;--line:#dfe5df;--btn:#286844;--btn-dark:#1d5235;--pill:#eaf5ed;--bad:#bd2e2e;--ok:#1f6a3c;--soft:#f7f9f6;--gold:#b79b64;--shadow:0 12px 34px rgba(28,52,39,.07)}
+  :root{--ink:#1d1d1f;--mut:#6e6e73;--bg:#f5f5f7;--panel:#fff;--line:#e8e8ed;--btn:#0071e3;--pill:#edf8f0;--bad:#b42318;--ok:#217a40;--soft:#fafafa}
   *{box-sizing:border-box}
-  html{scroll-behavior:smooth}
-  body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink);margin:0;line-height:1.45}
-  .topbar{background:linear-gradient(135deg,#173f29,#24623e);color:#fff;border-bottom:3px solid var(--gold)}
-  .topbar-inner{max-width:1180px;margin:0 auto;padding:22px 20px 18px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px}
-  .eyebrow,.section-kicker{display:block;font-size:10px;font-weight:800;letter-spacing:.16em;text-transform:uppercase}
-  .eyebrow{color:#ded1b3;margin-bottom:3px}
-  .brand-title{font-size:24px;font-weight:800;letter-spacing:-.025em}
-  .brand-subtitle{display:block;margin-top:2px;color:rgba(255,255,255,.7);font-size:12px;font-weight:500}
-  .quicknav{display:flex;gap:7px;align-items:center}
-  .quicknav a{color:#fff;text-decoration:none;font-size:12px;font-weight:700;padding:8px 10px;border:1px solid rgba(255,255,255,.18);border-radius:999px;background:rgba(255,255,255,.07)}
-  .quicknav a:hover{background:rgba(255,255,255,.14)}
-  .wrap{max-width:1180px;margin:0 auto;padding:20px}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
-  .head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);font-weight:800;font-size:17px}
-  .head-copy{display:flex;flex-direction:column;gap:2px}
-  .head .section-kicker{color:var(--gold)}
-  .head-note{font-size:12px;font-weight:500;color:var(--mut)}
-  .pad{padding:16px 18px}
-  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:18px;padding:12px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:0 8px 24px rgba(28,52,39,.05)}
-  .toolbar label{font-size:12px;font-weight:800;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-  select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="password"],input[type="time"]{min-height:42px;background:#fff;color:var(--ink);border:1px solid #d9e0da;border-radius:10px;padding:9px 11px;font:inherit;font-size:14px;outline:none;transition:border-color .18s,box-shadow .18s,background .18s}
-  select:focus,input:focus{border-color:#4c8b67;box-shadow:0 0 0 3px rgba(49,119,78,.12)}
-  button{min-height:42px;background:var(--btn);color:#fff;border:none;border-radius:10px;padding:9px 14px;font:inherit;font-size:13px;font-weight:800;cursor:pointer;transition:background .18s,transform .08s,box-shadow .18s}
-  button:hover{background:var(--btn-dark);box-shadow:0 5px 14px rgba(29,82,53,.14)}
-  button:active{transform:translateY(1px)}
-  button:disabled{opacity:.55;cursor:not-allowed}
-  button.secondary{background:#f3f6f3;color:#26342c;border:1px solid var(--line)}
-  button.secondary:hover{background:#e8eee9}
-  button.danger{background:#fff3f2;color:var(--bad);border:1px solid #efd0cd}
-  button.danger:hover{background:#fee7e5;box-shadow:none}
-  .tools-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:16px;align-items:start}
-  .form-grid{display:grid;gap:11px}
-  .form-grid.two{grid-template-columns:1fr 1.35fr}
-  .form-grid.booking{grid-template-columns:repeat(4,minmax(0,1fr))}
-  .field{display:flex;flex-direction:column;gap:5px;min-width:0}
+  html{scroll-behavior:smooth;scroll-padding-top:24px}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  .topbar{background:rgba(255,255,255,.9);border-bottom:1px solid var(--line)}
+  .topbar-inner{max-width:1200px;margin:auto;padding:34px 28px 26px;display:flex;justify-content:space-between;align-items:center;gap:24px}
+  .eyebrow{display:block;color:var(--mut);font-size:12px;font-weight:600;letter-spacing:.02em;margin-bottom:5px}
+  .brand-title{font-size:32px;line-height:1.15;letter-spacing:-1.2px;font-weight:650}
+  .brand-subtitle{display:block;color:var(--mut);font-size:12px;margin-top:8px}
+  .quicknav{display:flex;gap:4px;padding:4px;border:1px solid var(--line);background:#f5f5f7;border-radius:12px}
+  .quicknav a{padding:8px 12px;border-radius:8px;color:#515154;text-decoration:none;font-size:12px;font-weight:550;white-space:nowrap}
+  .quicknav a:first-child{background:#fff;color:#1d1d1f;box-shadow:0 1px 4px #0000000d}
+  .quicknav a:hover{background:white;color:var(--btn)}
+  .wrap{max-width:1200px;margin:auto;padding:24px 28px 64px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px;align-items:start}
+  .toolbar{grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:0 0 4px}
+  .toolbar>label{color:var(--mut);font-size:12px;margin-right:2px}
+  .toolbar #admKey{margin-left:auto;max-width:220px}
+  .card{min-width:0;background:#fff;border:1px solid var(--line);border-radius:20px;box-shadow:0 2px 8px #00000003;overflow:hidden;scroll-margin-top:20px}
+  #bookingsCard{grid-column:1/-1;grid-row:2}
+  #balanceCard{grid-column:1;grid-row:3}
+  #eventsCard{grid-column:2;grid-row:3;margin-top:0!important}
+  #blackoutCard{grid-column:1/-1;grid-row:4}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:22px 24px;border-bottom:1px solid var(--line);font-size:20px;letter-spacing:-.5px;font-weight:600}
+  .head-copy{display:flex;flex-direction:column;gap:3px}
+  .section-kicker{font-size:11px;letter-spacing:.01em;font-weight:500;color:var(--mut)}
+  .head-note{font-size:12px;font-weight:400;letter-spacing:0;color:var(--mut)}
+  .pad{padding:20px 24px}
+  .field{display:flex;flex-direction:column;gap:7px;min-width:0}
+  .field>span{font-size:12px;font-weight:500;color:#515154}
   .field.wide{grid-column:span 2}
-  .field span{font-size:11px;font-weight:800;color:var(--mut);letter-spacing:.045em;text-transform:uppercase}
   .field input{width:100%;min-width:0}
-  .form-actions{display:flex;gap:8px;align-items:flex-end;margin-top:12px}
-  .form-actions button{flex:1}
-  details.card>summary,details.inline-tool>summary,details.booking-details>summary{list-style:none;cursor:pointer}
+  input,select,button{font:inherit}
+  select,input[type="text"],input[type="email"],input[type="number"],input[type="date"],input[type="time"],input[type="password"]{color:var(--ink);background:#fff;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #d2d2d7;border-radius:10px;font-size:14px;outline:none}
+  input::placeholder{color:#89898f;opacity:1}
+  input:focus,select:focus{border-color:var(--btn);box-shadow:0 0 0 3px #0071e326}
+  button{min-height:44px;padding:10px 17px;border:1px solid transparent;border-radius:10px;background:var(--btn);color:white;font-size:13px;font-weight:550;cursor:pointer}
+  button:hover{background:#0077ed}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.secondary{background:#f0f0f3;color:#38383d;border-color:transparent}
+  button.secondary:hover{background:#e7e7ec}
+  button.danger{color:var(--bad);background:#fff;border-color:#eddcda}
+  button.danger:hover{background:#fff4f2}
+  button:focus-visible,summary:focus-visible,a:focus-visible{outline:3px solid #0071e366;outline-offset:3px}
+  .form-grid{display:grid;gap:16px}
+  .form-grid.two{grid-template-columns:1fr 1fr}
+  .form-grid.booking{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .form-actions{display:flex;gap:8px;margin-top:18px}
+  .form-actions button{min-width:150px}
+  details>summary{list-style:none;cursor:pointer}
   details summary::-webkit-details-marker{display:none}
-  .summary-action{font-size:12px;color:var(--btn);background:var(--pill);border:1px solid #d8ebdd;padding:6px 9px;border-radius:999px}
-  details[open] .summary-action{background:#f1f3f1;color:var(--mut)}
-  .inline-tool{border-bottom:1px solid var(--line);background:var(--soft)}
-  .inline-tool>summary{padding:12px 18px;display:flex;align-items:center;justify-content:space-between;font-size:13px;font-weight:800;color:var(--btn)}
-  .inline-tool>summary small{font-size:11px;color:var(--mut);font-weight:600}
+  .summary-action{flex-shrink:0;color:var(--btn);font-size:12px;letter-spacing:0;font-weight:500}
+  .summary-action::after{content:" +";margin-left:6px}
+  details[open]>.head .summary-action::after{content:" −"}
+  details.card:not([open])>.head{border-bottom:0}
+  .inline-tool{background:#fafafa;border-bottom:1px solid var(--line)}
+  .inline-tool>summary{display:flex;justify-content:space-between;align-items:center;padding:15px 24px;color:var(--btn);font-size:13px;font-weight:500;gap:12px}
+  .inline-tool>summary small{font-size:12px;color:var(--mut);font-weight:400}
+  #blackoutCard .inline-tool{margin:20px -24px -20px!important}
   .list{display:flex;flex-direction:column}
-  .rowb{display:grid;grid-template-columns:120px 1fr 140px 80px 110px 110px;gap:14px;padding:15px 18px;border-top:1px solid var(--line);align-items:center}
-  .booking-summary{background:#fff}
-  .booking-summary>div{min-width:0}
-  .booking-summary>div::before{content:attr(data-label);display:block;margin-bottom:3px;font-size:9px;font-weight:800;letter-spacing:.1em;color:#8a948e;text-transform:uppercase}
-  .meta{background:var(--soft);border-top:1px solid var(--line)}
-  .meta-grid{padding:16px 18px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
-  .booking-actions{display:flex;flex-direction:column;gap:9px;align-items:stretch}
-  .booking-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
-  .booking-time-grid .wide{grid-column:1/-1}
-  .booking-time-grid>button{grid-column:1/-1}
-  .detail-label{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#849087;margin:14px 0 4px}
+  .rowb{display:grid;grid-template-columns:90px minmax(0,2fr) minmax(0,1.3fr) 65px 90px 100px;gap:18px;align-items:center;border-top:1px solid var(--line);padding:24px}
+  .rowb>div{min-width:0;overflow-wrap:anywhere}
+  .booking-summary>div::before{content:attr(data-label);display:block;color:var(--mut);font-size:11px;font-weight:400;margin-bottom:6px}
+  .booking-summary>div:nth-child(2)>div:first-child{font-size:18px;font-weight:600!important;letter-spacing:-.4px}
+  .booking-summary>div:first-child>div:first-child{font-weight:600!important}
+  .small{color:var(--mut);font-size:12px;line-height:1.6}
+  .pill,.badge{display:inline-block;padding:4px 10px;border-radius:7px;font-size:11px;font-weight:500;background:var(--pill);color:var(--ok);border:1px solid #ddefe2}
+  .pill.gray{color:#666;background:#f5f5f7;border-color:var(--line)}
+  .meta{background:#fafafa;border-top:1px solid var(--line)}
+  .meta-grid{padding:22px 24px;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px}
+  .detail-label{margin:16px 0 4px;font-size:12px;font-weight:550;color:#515154}
   .detail-label:first-child{margin-top:0}
-  .mobile-detail-summary{display:none}
-  .pill{background:var(--pill);color:var(--ok);padding:4px 8px;border-radius:999px;font-size:12px;display:inline-block;border:1px solid #dcefe3}
-  .pill.gray{background:#f1f1f1;color:#555;border-color:#e5e7eb}
-  .small{font-size:12px;color:var(--mut)}
-  .right{display:flex;gap:8px;justify-content:flex-end}
-  .empty{padding:18px;color:var(--mut)}
-  #toast{font-size:13px;margin-left:8px}
-  .ok{color:var(--ok)} .bad{color:var(--bad)}
-
-  /* Pop-Up Events rows */
-  .evtrow{display:grid;grid-template-columns:1.4fr 140px 210px 1fr;gap:12px;align-items:center;padding:14px 18px;border-top:1px solid var(--line)}
-  .badge{display:inline-block;background:var(--pill);border:1px solid #dcefe3;border-radius:999px;padding:4px 8px;font-size:12px;color:var(--ok)}
-  .btns{display:flex;gap:8px;align-items:center}
-  input.spin{width:70px;padding:6px 8px;border:1px solid var(--line);border-radius:10px}
-
-  /* Phone layout only. Desktop styles above remain unchanged. */
-  @media (max-width:700px){
-    html,body{max-width:100%;overflow-x:hidden}
-    .topbar-inner{padding:16px 14px 12px;display:block}
-    .brand-title{font-size:20px}
-    .brand-subtitle{font-size:11px}
-    .quicknav{margin-top:13px;overflow-x:auto;padding-bottom:3px;scrollbar-width:none}
-    .quicknav::-webkit-scrollbar{display:none}
-    .quicknav a{flex:0 0 auto;padding:7px 9px}
-    .wrap{width:100%;padding:12px}
-    .toolbar{flex-wrap:wrap;align-items:center;gap:7px;margin-bottom:12px;padding:10px}
-    #admKey{order:2;flex:1 0 100%;width:100%;max-width:none!important;margin-left:0!important}
-    #saveKey,#clearKey{order:3;flex:1}
-    #toast{order:4;flex-basis:100%;margin-left:0}
-    .card{width:100%;min-width:0;border-radius:13px;box-shadow:0 8px 22px rgba(28,52,39,.055)}
-    .head{padding:14px;font-size:16px}
-    .pad{padding:14px}
-    .tools-grid{grid-template-columns:1fr;gap:12px;margin-bottom:12px}
-    .form-grid.two,.form-grid.booking{grid-template-columns:1fr}
-    .field.wide{grid-column:auto}
-    .form-actions{flex-direction:column;align-items:stretch}
-    .form-actions button{width:100%}
-    .inline-tool>summary{padding:12px 14px}
-    #bpResult>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
-    #bpResult input,#bpResult button{width:100%!important;min-width:0!important}
-
-    /* Convert wide desktop booking rows into compact two-column cards. */
-    .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:13px 16px;padding:15px 14px}
-    .rowb>div{min-width:0;overflow-wrap:anywhere}
-    .booking-summary>div:nth-child(5),.booking-summary>div:nth-child(6){align-self:end}
-    .mobile-detail-summary{display:flex!important;align-items:center;justify-content:space-between;padding:12px 14px;font-size:13px;font-weight:800;color:var(--btn)}
-    .mobile-detail-summary::after{content:"+";font-size:18px;font-weight:500}
-    .booking-details[open]>.mobile-detail-summary::after{content:"–"}
-    .meta-grid{grid-template-columns:1fr;gap:16px;padding:14px}
-    .right{align-items:stretch!important}
-    .right input,.right button{width:100%!important;min-width:0!important}
-    [id^="staff-wrap-"]{flex-direction:column}
-    .evtrow{grid-template-columns:1fr;gap:9px;padding:12px 0}
-    .btns{flex-wrap:wrap}
+  .mobile-detail-summary{display:flex;align-items:center;justify-content:space-between;padding:13px 24px;color:var(--btn);font-size:12px;font-weight:500}
+  .mobile-detail-summary::after{content:"+";font-size:18px}
+  .booking-details[open]>.mobile-detail-summary::after{content:"−"}
+  .booking-actions{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .booking-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .booking-time-grid .wide,.booking-time-grid>button{grid-column:1/-1}
+  [id^="staff-wrap-"] input{min-width:0;width:100%}
+  .right,.btns{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .right{justify-content:flex-end}
+  .empty{padding:24px;color:var(--mut);font-size:13px}
+  .evtrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:18px 0;border-top:1px solid var(--line)}
+  input.spin{width:70px}
+  #toast{font-size:12px;flex-basis:100%}
+  #toast:empty{display:none}
+  .ok{color:var(--ok)}.bad{color:var(--bad)}
+  #bpResult{background:#f5faff!important}
+  @media(min-width:701px) and (max-width:1000px){
+    .topbar-inner{align-items:flex-start;flex-direction:column}
+    .rowb{grid-template-columns:80px minmax(0,1.8fr) minmax(0,1fr) 50px 70px 90px;gap:10px}
+    .form-grid.booking{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .toolbar #admKey{max-width:180px}
   }
+  @media(max-width:700px){
+    .topbar-inner{padding:24px 20px 16px;display:block}
+    .brand-title{font-size:30px;letter-spacing:-1px}
+    .brand-subtitle{margin-top:6px;font-size:11px}
+    .quicknav{margin-top:22px;overflow-x:auto;max-width:100%;scrollbar-width:none}
+    .quicknav::-webkit-scrollbar{display:none}
+    .quicknav a{padding:8px 10px}
+    .wrap{display:flex;flex-direction:column;gap:16px;padding:18px 16px 48px}
+    .wrap>*{width:100%;min-width:0}
+    .toolbar{gap:7px;order:0}
+    #bookingsCard{order:1}
+    #balanceCard{order:2}
+    #eventsCard{order:3}
+    #blackoutCard{order:4}
+    .toolbar>label{font-size:11px}
+    #mSel{flex:1}
+    #ySel{width:83px}
+    #refresh{padding:9px 12px}
+    .toolbar #admKey{order:2;flex:1 1 100%;width:100%;max-width:none!important;margin:6px 0 0!important}
+    #saveKey,#clearKey{order:3;flex:1}
+    #toast{order:4}
+    input,select{font-size:16px!important}
+    .card{border-radius:18px}
+    .head{padding:20px;font-size:20px}
+    .head-note{max-width:100px;text-align:right;font-size:11px}
+    .pad{padding:20px}
+    .form-grid.booking,.form-grid.two{grid-template-columns:minmax(0,1fr)}
+    .field.wide{grid-column:auto}
+    .form-actions{flex-direction:column}
+    .form-actions button{width:100%}
+    .inline-tool>summary{padding:15px 20px}
+    #blackoutCard .inline-tool{margin:20px -20px -20px!important}
+    .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:18px;padding:22px 20px}
+    .booking-summary>div:nth-child(2)>div:first-child{font-size:18px}
+    .meta-grid{grid-template-columns:minmax(0,1fr);gap:24px;padding:20px}
+    .mobile-detail-summary{padding:14px 20px}
+    [id^="staff-wrap-"]{flex-direction:column}
+    #blackouts .rowb>div:last-child{grid-column:1/-1;justify-content:flex-start}
+    #bpResult>div[style*="display:flex"]{flex-direction:column;align-items:stretch!important}
+    #bpResult input{width:100%;min-width:0!important}
+  }
+  @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 </style>
 </head>
 <body>
@@ -1966,14 +1984,14 @@ app.get("/admin", (_req, res) => {
   <div class="topbar-inner">
     <div>
       <span class="eyebrow">Loom Eatery</span>
-      <div class="brand-title">Booking Administration</div>
+      <div class="brand-title">Your workspace.</div>
       <span class="brand-subtitle">Private Chef Christopher LaMagna</span>
     </div>
     <nav class="quicknav" aria-label="Admin sections">
       <a href="#bookingsCard">Bookings</a>
-      <a href="#blackoutCard">Blackouts</a>
       <a href="#balanceCard">Payments</a>
       <a href="#eventsCard">Events</a>
+      <a href="#blackoutCard">Blackouts</a>
       <a href="/admin/gift-cards">Gift cards</a>
     </nav>
   </div>
@@ -1992,59 +2010,7 @@ app.get("/admin", (_req, res) => {
     <span id="toast"></span>
   </div>
 
-  <div class="tools-grid">
-  <details class="card" id="balanceCard">
-    <summary class="head">
-      <span class="head-copy"><span class="section-kicker">Payments</span>Create Remaining Balance Link</span>
-      <span class="summary-action">Open tool</span>
-    </summary>
-    <div class="pad">
-      <div class="small" style="margin-bottom:10px">Copy the exact <strong>TOTAL DUE</strong> from your Google invoice. This creates a one-use Stripe link that turns off after payment and sends the paid-in-full email automatically.</div>
-      <div class="form-grid two">
-        <label class="field"><span>Event date</span><input type="date" id="bpDate"/></label>
-        <label class="field"><span>Client name</span><input type="text" id="bpName" placeholder="Full name"/></label>
-        <label class="field wide"><span>Client email</span><input type="email" id="bpEmail" placeholder="name@example.com"/></label>
-        <label class="field wide"><span>Package / event</span><input type="text" id="bpPackage" placeholder="Tasting Menu"/></label>
-        <label class="field"><span>Exact total due</span><input type="number" id="bpAmount" min="0.50" max="100000" step="0.01" placeholder="$0.00"/></label>
-        <label class="field"><span>Invoice number</span><input type="text" id="bpInvoice" placeholder="Optional"/></label>
-        <label class="field wide"><span>Booking ID</span><input type="number" id="bpBookingId" min="1" step="1" placeholder="Optional"/></label>
-      </div>
-      <div class="form-actions">
-        <button id="bpCreate" type="button">Create balance link</button>
-      </div>
-      <div id="bpResult" style="display:none;margin-top:12px;padding:12px;background:#f7faf7;border:1px solid var(--line);border-radius:10px">
-        <div style="font-weight:700;margin-bottom:7px">Payment link ready</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input type="text" id="bpUrl" readonly style="min-width:280px;flex:1"/>
-          <button id="bpCopy" type="button" class="secondary">Copy link</button>
-          <a id="bpOpen" target="_blank" rel="noopener" style="color:var(--btn);font-weight:700">Open</a>
-        </div>
-      </div>
-    </div>
-  </details>
 
-    <div class="card" id="blackoutCard">
-      <div class="head">
-        <span class="head-copy"><span class="section-kicker">Availability</span>Blackout dates</span>
-        <span class="head-note">Blocks online booking</span>
-      </div>
-      <div class="pad">
-        <div class="form-grid two">
-          <label class="field"><span>Date</span><input type="date" id="bdDate"/></label>
-          <label class="field"><span>Reason</span><input type="text" id="bdReason" placeholder="Optional private note"/></label>
-        </div>
-        <div class="form-actions"><button id="bdAdd" type="button">Add blackout date</button></div>
-        <details class="inline-tool" style="margin:14px -18px -16px">
-          <summary><span>Add multiple dates</span><small>Bulk tool</small></summary>
-          <div class="pad">
-            <label class="field"><span>Dates separated by commas</span><input type="text" id="bdBulk" placeholder="2026-10-06, 2026-10-07"/></label>
-            <div class="form-actions"><button id="bdBulkBtn" type="button" class="secondary">Add all dates</button></div>
-          </div>
-        </details>
-      </div>
-      <div class="list" id="blackouts"></div>
-    </div>
-  </div>
 
  <div class="card" id="bookingsCard">
   <div class="head">
@@ -2075,6 +2041,36 @@ app.get("/admin", (_req, res) => {
   <div class="list" id="bookings"></div>
 </div>
 
+  <details class="card" id="balanceCard">
+    <summary class="head">
+      <span class="head-copy"><span class="section-kicker">Payments</span>Create Remaining Balance Link</span>
+      <span class="summary-action">Open tool</span>
+    </summary>
+    <div class="pad">
+      <div class="small" style="margin-bottom:10px">Copy the exact <strong>TOTAL DUE</strong> from your Google invoice. This creates a one-use Stripe link that turns off after payment and sends the paid-in-full email automatically.</div>
+      <div class="form-grid two">
+        <label class="field"><span>Event date</span><input type="date" id="bpDate"/></label>
+        <label class="field"><span>Client name</span><input type="text" id="bpName" placeholder="Full name"/></label>
+        <label class="field wide"><span>Client email</span><input type="email" id="bpEmail" placeholder="name@example.com"/></label>
+        <label class="field wide"><span>Package / event</span><input type="text" id="bpPackage" placeholder="Tasting Menu"/></label>
+        <label class="field"><span>Exact total due</span><input type="number" id="bpAmount" min="0.50" max="100000" step="0.01" placeholder="$0.00"/></label>
+        <label class="field"><span>Invoice number</span><input type="text" id="bpInvoice" placeholder="Optional"/></label>
+        <label class="field wide"><span>Booking ID</span><input type="number" id="bpBookingId" min="1" step="1" placeholder="Optional"/></label>
+      </div>
+      <div class="form-actions">
+        <button id="bpCreate" type="button">Create balance link</button>
+      </div>
+      <div id="bpResult" style="display:none;margin-top:12px;padding:12px;background:#f7faf7;border:1px solid var(--line);border-radius:10px">
+        <div style="font-weight:700;margin-bottom:7px">Payment link ready</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" id="bpUrl" readonly style="min-width:280px;flex:1"/>
+          <button id="bpCopy" type="button" class="secondary">Copy link</button>
+          <a id="bpOpen" target="_blank" rel="noopener" style="color:var(--btn);font-weight:700">Open</a>
+        </div>
+      </div>
+    </div>
+  </details>
+
   <!-- Pop-Up Events Card -->
   <div class="card" id="eventsCard" style="margin-top:16px">
     <div class="head">
@@ -2088,6 +2084,27 @@ app.get("/admin", (_req, res) => {
       <div class="list" id="events"></div>
     </div>
   </div>
+    <div class="card" id="blackoutCard">
+      <div class="head">
+        <span class="head-copy"><span class="section-kicker">Availability</span>Blackout dates</span>
+        <span class="head-note">Blocks online booking</span>
+      </div>
+      <div class="pad">
+        <div class="form-grid two">
+          <label class="field"><span>Date</span><input type="date" id="bdDate"/></label>
+          <label class="field"><span>Reason</span><input type="text" id="bdReason" placeholder="Optional private note"/></label>
+        </div>
+        <div class="form-actions"><button id="bdAdd" type="button">Add blackout date</button></div>
+        <details class="inline-tool" style="margin:14px -18px -16px">
+          <summary><span>Add multiple dates</span><small>Bulk tool</small></summary>
+          <div class="pad">
+            <label class="field"><span>Dates separated by commas</span><input type="text" id="bdBulk" placeholder="2026-10-06, 2026-10-07"/></label>
+            <div class="form-actions"><button id="bdBulkBtn" type="button" class="secondary">Add all dates</button></div>
+          </div>
+        </details>
+      </div>
+      <div class="list" id="blackouts"></div>
+    </div>
 </div>
 
 <script>
