@@ -337,3 +337,22 @@ test("admin time save round-trips through listing and calendar with a stub datab
   });
   assert.equal(invalid.status, 400);
 });
+
+test("an untimed booking stays on its booked date in the calendar feed", async t => {
+  const { default: pg } = await import("pg");
+  t.mock.method(pg.Pool.prototype, "query", async sql => {
+    assert.match(sql, /FROM bookings/);
+    return { rows: [{
+      id: 142,
+      start_at: new Date("2026-10-02T00:00:00.000Z"),
+      end_at: new Date("2026-10-03T00:00:00.000Z"),
+      package_title: "Private Event",
+      status: "confirmed"
+    }] };
+  });
+  const feed = await (await fetch(baseUrl + "/calendar.ics")).text();
+  assert.match(feed, /UID:142/);
+  assert.match(feed, /DTSTART;VALUE=DATE:20261002/);
+  assert.match(feed, /DTEND;VALUE=DATE:20261003/);
+  assert.doesNotMatch(feed, /20261002T000000Z/);
+});
