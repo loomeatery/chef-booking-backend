@@ -1788,14 +1788,23 @@ app.get("/calendar.ics", async (req, res) => {
           .filter(Boolean)
           .join(", ");
 
+      // Untimed bookings are stored as midnight UTC to midnight UTC on the
+      // following day. Publish them as date-only events so a calendar's local
+      // timezone cannot move the booking onto the previous evening.
+      const starts = new Date(b.start_at);
+      const ends = new Date(b.end_at);
+      const allDay = starts.getUTCHours() === 0 && starts.getUTCMinutes() === 0
+        && starts.getUTCSeconds() === 0 && ends - starts === 86400000;
+
       const title = includeDetails
         ? `${b.package_title || "Private Event"} — ${b.customer_name || "Guest"} (${b.guests || "?"} guests)`
         : "BUSY — Private Event";
 
       cal.createEvent({
         id: String(b.id),
-        start: new Date(b.start_at),
-        end: new Date(b.end_at),
+        start: starts,
+        end: ends,
+        allDay,
         summary: title,
         location: includeDetails && location ? location : undefined,
         description: includeDetails
