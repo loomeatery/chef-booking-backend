@@ -1556,6 +1556,51 @@ app.post("/api/admin/bookings", requireAdmin, async (req, res) => {
   }
 });
 
+app.put("/api/admin/bookings/:id/details", requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: "Invalid booking ID." });
+
+  const body = req.body || {};
+  const fields = ["customerName", "customerEmail", "packageTitle", "guests", "phone", "address1", "city", "state", "zip", "dietNotes"];
+  if (fields.some(field => !Object.hasOwn(body, field))) {
+    return res.status(400).json({ error: "All booking detail fields are required." });
+  }
+  const value = (field, max) => typeof body[field] === "string" ? body[field].trim().slice(0, max + 1) : "";
+  const name = value("customerName", 120);
+  const email = value("customerEmail", 200).toLowerCase();
+  const packageTitle = value("packageTitle", 120);
+  const guests = Number(body.guests);
+  const phone = value("phone", 60);
+  const address = value("address1", 240);
+  const city = value("city", 120);
+  const state = value("state", 60);
+  const zip = value("zip", 20);
+  const notes = value("dietNotes", 4000);
+  if (!name || name.length > 120 || !packageTitle || packageTitle.length > 120 ||
+      !Number.isInteger(guests) || guests < 1 || guests > 500 ||
+      (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) || email.length > 200 ||
+      phone.length > 60 || address.length > 240 || city.length > 120 ||
+      state.length > 60 || zip.length > 20 || notes.length > 4000) {
+    return res.status(400).json({ error: "Check the name, package, guest count (1–500), email, and field lengths." });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE bookings SET customer_name=$2, customer_email=$3, package_title=$4,
+          guests=$5, phone=$6, address_line1=$7, city=$8, state=$9, zip=$10, diet_notes=$11
+        WHERE id=$1
+        RETURNING id,customer_name,customer_email,package_title,guests,phone,
+                  address_line1,city,state,zip,diet_notes`,
+      [id, name, email, packageTitle, guests, phone, address, city, state, zip, notes]
+    );
+    if (!result.rowCount) return res.status(404).json({ error: "Booking not found." });
+    res.json({ ok: true, booking: result.rows[0] });
+  } catch (error) {
+    console.error("Failed to update booking details:", error);
+    res.status(500).json({ error: "Booking details could not be saved." });
+  }
+});
+
 // Interpret admin wall-clock times in New York, independently of the server TZ.
 export function bookingTimeRange(date, startTime, endTime) {
   if (!isValidISODate(date)) throw new Error("Choose a valid event date.");
@@ -1955,6 +2000,12 @@ app.get("/admin", (_req, res) => {
   .mobile-detail-summary::after{content:"+";font-size:18px}
   .booking-details[open]>.mobile-detail-summary::after{content:"−"}
   .booking-actions{display:flex;flex-direction:column;gap:10px;min-width:0}
+  .booking-edit{border:1px solid var(--line);border-radius:12px;background:white;overflow:hidden}
+  .booking-edit>summary{padding:12px 14px;color:var(--btn);font-weight:600}
+  .booking-edit .edit-body{padding:14px;border-top:1px solid var(--line)}
+  .booking-edit .form-grid{grid-template-columns:1fr 1fr;gap:12px}
+  .booking-edit .edit-body>button{width:100%;margin-top:14px}
+  .booking-edit .small{margin-top:10px}
   .booking-time-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .booking-time-grid .wide,.booking-time-grid>button{grid-column:1/-1}
   [id^="staff-wrap-"] input{min-width:0;width:100%}
@@ -2008,6 +2059,8 @@ app.get("/admin", (_req, res) => {
     .rowb{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:18px;padding:22px 20px}
     .booking-summary>div:nth-child(2)>div:first-child{font-size:18px}
     .meta-grid{grid-template-columns:minmax(0,1fr);gap:24px;padding:20px}
+    .booking-edit .form-grid{grid-template-columns:minmax(0,1fr)}
+    .booking-edit .field.wide{grid-column:auto}
     .mobile-detail-summary{padding:14px 20px}
     [id^="staff-wrap-"]{flex-direction:column}
     #blackouts .rowb>div:last-child{grid-column:1/-1;justify-content:flex-start}
@@ -2282,6 +2335,31 @@ $("bpCopy").addEventListener("click", async ()=>{
   toast("Payment link copied ✓", true);
 });
 
+async function saveBookingDetails(id, inputs, button){
+  const payload = Object.fromEntries(Object.entries(inputs).map(([field,input]) => [field,input.value.trim()]));
+  if(!payload.customerName || !payload.packageTitle || !Number.isInteger(Number(payload.guests)) ||
+      Number(payload.guests)<1 || Number(payload.guests)>500){
+    toast("Enter a name, package, and guest count from 1 to 500", false);
+    return;
+  }
+  button.disabled=true;
+  button.textContent="Saving…";
+  try{
+    const response=await fetch(BASE + "/api/admin/bookings/" + id + "/details", {
+      method:"PUT", headers:headers(), body:JSON.stringify(payload)
+    });
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok) throw new Error(result.error || "Booking could not be saved.");
+    await loadBookings();
+    toast("Booking details saved ✓ · Review your invoice if pricing changed.", true);
+  }catch(error){
+    toast(error.message || "Booking could not be saved.", false);
+  }finally{
+    button.disabled=false;
+    button.textContent="Save details";
+  }
+}
+
 async function saveBookingTime(id, date, startTime, endTime, button){
 
   if(!date || !startTime){
@@ -2426,6 +2504,46 @@ async function loadBookings(){
       const right=document.createElement("div");
       right.className="booking-actions";
 
+      const editor=document.createElement("details");
+      editor.className="booking-edit";
+      const editorSummary=document.createElement("summary");
+      editorSummary.textContent="Edit booking details";
+      const editorBody=document.createElement("div");
+      editorBody.className="edit-body";
+      const editorGrid=document.createElement("div");
+      editorGrid.className="form-grid";
+      const inputs={};
+      const editFields=[
+        ["customerName","Client name",b.customer_name,"text"],
+        ["customerEmail","Email",b.customer_email,"email"],
+        ["packageTitle","Package / event",b.package_title,"text"],
+        ["guests","Guests",b.guests,"number"],
+        ["phone","Phone",b.phone,"text"],
+        ["address1","Address",b.address_line1,"text"],
+        ["city","City",b.city,"text"],
+        ["state","State",b.state,"text"],
+        ["zip","ZIP",b.zip,"text"],
+        ["dietNotes","Dietary notes / notes",b.diet_notes,"text"]
+      ];
+      editFields.forEach(([key,label,current,type])=>{
+        const field=document.createElement("label");
+        field.className="field";
+        if(key==="address1" || key==="dietNotes") field.classList.add("wide");
+        const caption=document.createElement("span"); caption.textContent=label;
+        const input=document.createElement("input");
+        input.type=type; input.value=current == null ? "" : String(current);
+        if(key==="guests"){ input.min="1"; input.max="500"; input.step="1"; }
+        field.append(caption,input); editorGrid.appendChild(field); inputs[key]=input;
+      });
+      const editButton=document.createElement("button");
+      editButton.type="button"; editButton.textContent="Save details";
+      editButton.addEventListener("click",()=>saveBookingDetails(b.id,inputs,editButton));
+      const editNote=document.createElement("div");
+      editNote.className="small";
+      editNote.textContent="Guest and package changes update the booking and private calendar. Existing deposits, Stripe payments, and invoice amounts do not change automatically.";
+      editorBody.append(editorGrid,editButton,editNote);
+      editor.append(editorSummary,editorBody);
+
       const timeBox = document.createElement("div");
       timeBox.className="booking-time-grid";
 
@@ -2486,7 +2604,7 @@ async function loadBookings(){
       balanceBtn.disabled = Boolean(b.balance_paid_at);
       balanceBtn.addEventListener("click", ()=>prefillBalanceForm(b));
 
-      right.append(timeBox, balanceBtn, delBtn);
+      right.append(editor, timeBox, balanceBtn, delBtn);
       metaGrid.append(left,right);
       meta.append(metaSummary,metaGrid);
       wrap.appendChild(meta);
