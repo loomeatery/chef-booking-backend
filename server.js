@@ -2462,7 +2462,6 @@ async function loadBookings(){
       wrap.appendChild(row);
 
       const meta=document.createElement("details"); meta.className="meta booking-details";
-      meta.open = !window.matchMedia("(max-width:700px)").matches;
       const metaSummary=document.createElement("summary");
       metaSummary.className="mobile-detail-summary";
       metaSummary.textContent="View details and actions";
