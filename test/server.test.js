@@ -356,3 +356,31 @@ test("an untimed booking stays on its booked date in the calendar feed", async t
   assert.match(feed, /DTEND;VALUE=DATE:20261003/);
   assert.doesNotMatch(feed, /20261002T000000Z/);
 });
+
+test("admin can edit booking details without modifying recorded payment amounts", async t => {
+  const { default: pg } = await import("pg");
+  let saved;
+  t.mock.method(pg.Pool.prototype, "query", async (sql, params) => {
+    assert.match(sql, /UPDATE bookings SET customer_name=/);
+    assert.doesNotMatch(sql, /subtotal_cents|deposit_cents|balance_cents|start_at|end_at/);
+    saved = params;
+    return { rowCount: 1, rows: [{ id: 42, guests: params[4], package_title: params[3] }] };
+  });
+  const payload = {
+    customerName: "Client Name", customerEmail: "client@example.com",
+    packageTitle: "Family Style", guests: "12", phone: "5551234",
+    address1: "123 Main St", city: "New York", state: "NY", zip: "10001",
+    dietNotes: "No peanuts"
+  };
+  const request = (key, body) => fetch(`${baseUrl}/api/admin/bookings/42/details`, {
+    method: "PUT", headers: { "Content-Type": "application/json", ...(key ? { "x-admin-key": key } : {}) },
+    body: JSON.stringify(body)
+  });
+  assert.equal((await request(null, payload)).status, 401);
+  assert.equal((await request("test-admin-key", { ...payload, guests: 0 })).status, 400);
+  assert.equal(saved, undefined);
+  const response = await request("test-admin-key", payload);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).booking.guests, 12);
+  assert.deepEqual(saved.slice(0, 5), [42, "Client Name", "client@example.com", "Family Style", 12]);
+});
