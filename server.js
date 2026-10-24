@@ -203,14 +203,14 @@ export const BOOKING_PACKAGES = Object.freeze({
   // Keep the legacy package ID because the live Squarespace form already uses
   // it, but price Pig Roast as the same flat-rate package shown to customers.
   cocktail: Object.freeze({ flatPrice: 2750, depositPct: 0.30 }),
-  dinner2:  Object.freeze({ perPerson: 150, depositPct: 0.30 })
+  dinner2:  Object.freeze({ perPerson: 200, depositPct: 0.30 })
 });
 
 export const PACKAGE_TITLES = Object.freeze({
   tasting:  "Tasting Menu",
   family:   "Family-Style Dinner",
   cocktail: "Pig Roast",
-  dinner2:  "At Home Pasta Cooking Class"
+  dinner2:  "Group Pasta Class"
 });
 
 export function classifyCheckoutPayment(metadata = {}) {
@@ -1155,11 +1155,11 @@ app.post("/api/book", checkoutLimiter, async (req, res) => {
       }
     }
 
-    // At Home Pasta Cooking Class (keeps packageId = "dinner2" for wiring)
+    // Group Pasta Class (keeps packageId = "dinner2" for live form wiring)
     // Rules: minimum 8 guests, any day
     if (packageId === "dinner2") {
       if (guests < 8) {
-        return res.status(400).json({ error: "At Home Pasta Cooking Class requires a minimum of 8 guests." });
+        return res.status(400).json({ error: "Group Pasta Class requires a minimum of 8 guests." });
       }
     }
 

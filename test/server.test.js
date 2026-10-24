@@ -49,13 +49,13 @@ test("booking package IDs keep their production pricing and titles", () => {
     tasting: { perPerson: 215, depositPct: 0.30 },
     family: { perPerson: 200, depositPct: 0.30 },
     cocktail: { flatPrice: 2750, depositPct: 0.30 },
-    dinner2: { perPerson: 150, depositPct: 0.30 }
+    dinner2: { perPerson: 200, depositPct: 0.30 }
   });
   assert.deepEqual(PACKAGE_TITLES, {
     tasting: "Tasting Menu",
     family: "Family-Style Dinner",
     cocktail: "Pig Roast",
-    dinner2: "At Home Pasta Cooking Class"
+    dinner2: "Group Pasta Class"
   });
 });
 
@@ -64,7 +64,7 @@ test("shared booking pricing keeps Pig Roast flat and other packages per-person"
   assert.equal(calculateBookingSubtotal("cocktail", 100, "2026-10-10"), 2750);
   assert.equal(calculateBookingSubtotal("tasting", 6, "2026-10-10"), 1290);
   assert.equal(calculateBookingSubtotal("family", 8, "2026-12-25"), 2400);
-  assert.equal(calculateBookingSubtotal("dinner2", 8, "2026-10-10"), 1200);
+  assert.equal(calculateBookingSubtotal("dinner2", 8, "2026-10-10"), 1600);
 });
 
 test("service-area ZIP rules accept supported boroughs and counties", () => {
@@ -120,6 +120,21 @@ test("quote endpoint returns the Pig Roast flat price and deposit at any guest c
       deposit: 825
     });
   }
+});
+
+test("quote endpoint returns the Group Pasta Class price and deposit", async () => {
+  const response = await fetch(`${baseUrl}/api/quote`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ packageId: "dinner2", guests: 8, date: "2026-10-10" })
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    subtotal: 1600,
+    tax: 0,
+    total: 1600,
+    deposit: 480
+  });
 });
 
 test("quote endpoint rejects unknown packages and invalid guest counts", async () => {
