@@ -46,7 +46,7 @@ after(async () => {
 
 test("booking package IDs keep their production pricing and titles", () => {
   assert.deepEqual(BOOKING_PACKAGES, {
-    tasting: { perPerson: 215, depositPct: 0.30 },
+    tasting: { perPerson: 225, depositPct: 0.30 },
     family: { perPerson: 215, depositPct: 0.30 },
     cocktail: { flatPrice: 2750, depositPct: 0.30 },
     dinner2: { perPerson: 200, depositPct: 0.30 }
@@ -62,7 +62,7 @@ test("booking package IDs keep their production pricing and titles", () => {
 test("shared booking pricing keeps Pig Roast flat and other packages per-person", () => {
   assert.equal(calculateBookingSubtotal("cocktail", 1, "2026-10-10"), 2750);
   assert.equal(calculateBookingSubtotal("cocktail", 100, "2026-10-10"), 2750);
-  assert.equal(calculateBookingSubtotal("tasting", 6, "2026-10-10"), 1290);
+  assert.equal(calculateBookingSubtotal("tasting", 6, "2026-10-10"), 1350);
   assert.equal(calculateBookingSubtotal("family", 8, "2026-12-25"), 2400);
   assert.equal(calculateBookingSubtotal("dinner2", 8, "2026-10-10"), 1600);
 });
@@ -80,7 +80,7 @@ test("holiday pricing preserves current business rules", () => {
   assert.equal(getHolidayPerPerson("2026-09-07", "tasting", 215), 250);
   assert.equal(getHolidayPerPerson("2026-12-25", "family", 200), 300);
   assert.equal(getHolidayPerPerson("2026-12-25", "cocktail", 125), 125);
-  assert.equal(getHolidayPerPerson("2026-10-10", "tasting", 215), 215);
+  assert.equal(getHolidayPerPerson("2026-10-10", "tasting", 225), 225);
 });
 
 test("timing-safe token comparison rejects missing and incorrect values", () => {
@@ -98,10 +98,10 @@ test("quote endpoint returns the expected live tasting-menu deposit", async () =
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), {
-    subtotal: 1290,
+    subtotal: 1350,
     tax: 0,
-    total: 1290,
-    deposit: 387
+    total: 1350,
+    deposit: 405
   });
 });
 
