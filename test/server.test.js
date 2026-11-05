@@ -47,7 +47,7 @@ after(async () => {
 test("booking package IDs keep their production pricing and titles", () => {
   assert.deepEqual(BOOKING_PACKAGES, {
     tasting: { perPerson: 215, depositPct: 0.30 },
-    family: { perPerson: 200, depositPct: 0.30 },
+    family: { perPerson: 215, depositPct: 0.30 },
     cocktail: { flatPrice: 2750, depositPct: 0.30 },
     dinner2: { perPerson: 200, depositPct: 0.30 }
   });
@@ -103,6 +103,18 @@ test("quote endpoint returns the expected live tasting-menu deposit", async () =
     total: 1290,
     deposit: 387
   });
+});
+
+test("family-style quotes use $215 per guest and a 30% deposit", async () => {
+  for (const [guests, subtotal, deposit] of [[8, 1720, 516], [10, 2150, 645]]) {
+    const response = await fetch(`${baseUrl}/api/quote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ packageId: "family", guests, date: "2026-11-20" })
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { subtotal, tax: 0, total: subtotal, deposit });
+  }
 });
 
 test("quote endpoint returns the Pig Roast flat price and deposit at any guest count", async () => {

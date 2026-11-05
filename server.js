@@ -199,7 +199,7 @@ function protectCalendarResponse(res) {
 
 export const BOOKING_PACKAGES = Object.freeze({
   tasting:  Object.freeze({ perPerson: 215, depositPct: 0.30 }),
-  family:   Object.freeze({ perPerson: 200, depositPct: 0.30 }),
+  family:   Object.freeze({ perPerson: 215, depositPct: 0.30 }),
   // Keep the legacy package ID because the live Squarespace form already uses
   // it, but price Pig Roast as the same flat-rate package shown to customers.
   cocktail: Object.freeze({ flatPrice: 2750, depositPct: 0.30 }),
